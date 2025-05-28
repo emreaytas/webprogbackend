@@ -14,6 +14,16 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllers();
 
+builder.Services.AddHttpClient();
+
+// DeepSeek için özel HttpClient
+builder.Services.AddHttpClient("DeepSeek", client =>
+{
+    client.BaseAddress = new Uri("https://api.deepseek.com");
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "WebProgBackend/1.0");
+});
+
 // Configure CORS
 builder.Services.ConfigureCors(builder.Configuration);
 
