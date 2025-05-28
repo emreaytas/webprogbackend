@@ -1,10 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using webprogbackend.Attributes;
 using webprogbackend.Data;
 using webprogbackend.Models;
 using webprogbackend.Models.Enums;
-using webprogbackend.Attributes;
 
 namespace webprogbackend.Controllers
 {
@@ -27,10 +28,10 @@ namespace webprogbackend.Controllers
             [FromQuery] decimal? minPrice = null,
             [FromQuery] decimal? maxPrice = null,
             [FromQuery] bool? inStock = null,
-            [FromQuery] string sortBy = "name",
-            [FromQuery] string sortOrder = "asc",
             [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 10)
+            [FromQuery] int pageSize = 10,
+            [FromQuery] string sortBy = "name",
+            [FromQuery] string sortOrder = "asc")
         {
             var query = _context.Products.AsQueryable();
 
@@ -66,24 +67,28 @@ namespace webprogbackend.Controllers
             // Apply sorting
             query = sortBy.ToLower() switch
             {
-                "name" => sortOrder.ToLower() == "desc" ? query.OrderByDescending(p => p.Name) : query.OrderBy(p => p.Name),
-                "price" => sortOrder.ToLower() == "desc" ? query.OrderByDescending(p => p.Price) : query.OrderBy(p => p.Price),
-                "stock" => sortOrder.ToLower() == "desc" ? query.OrderByDescending(p => p.StockQuantity) : query.OrderBy(p => p.StockQuantity),
-                "created" => sortOrder.ToLower() == "desc" ? query.OrderByDescending(p => p.CreatedAt) : query.OrderBy(p => p.CreatedAt),
-                _ => query.OrderBy(p => p.Name)
+                "price" => sortOrder.ToLower() == "desc"
+                    ? query.OrderByDescending(p => p.Price)
+                    : query.OrderBy(p => p.Price),
+                "stock" => sortOrder.ToLower() == "desc"
+                    ? query.OrderByDescending(p => p.StockQuantity)
+                    : query.OrderBy(p => p.StockQuantity),
+                "created" => sortOrder.ToLower() == "desc"
+                    ? query.OrderByDescending(p => p.CreatedAt)
+                    : query.OrderBy(p => p.CreatedAt),
+                _ => sortOrder.ToLower() == "desc"
+                    ? query.OrderByDescending(p => p.Name)
+                    : query.OrderBy(p => p.Name)
             };
 
-            // Get total count for pagination
             var totalCount = await query.CountAsync();
             var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
-            // Apply pagination
             var products = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
 
-            // Add pagination metadata to response headers
             Response.Headers.Add("X-Total-Count", totalCount.ToString());
             Response.Headers.Add("X-Total-Pages", totalPages.ToString());
             Response.Headers.Add("X-Current-Page", page.ToString());
@@ -105,188 +110,70 @@ namespace webprogbackend.Controllers
             return product;
         }
 
-        // GET: api/Products/TopSelling
-        [HttpGet("TopSelling")]
-        public async Task<ActionResult<IEnumerable<object>>> GetTopSellingProducts([FromQuery] int count = 3)
+        // PUT: api/Products/5
+        [HttpPut("{id}")]
+        [AuthorizeRoles(UserRole.Admin)]
+        public async Task<IActionResult> PutProduct(int id, Product product)
         {
-            var topProducts = await _context.OrderItems
-                .GroupBy(oi => oi.ProductId)
-                .Select(g => new
+            if (id != product.Id)
+            {
+                return BadRequest();
+            }
+
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var existingProduct = await _context.Products.FindAsync(id);
+            if (existingProduct == null)
+            {
+                return NotFound();
+            }
+
+            // Update properties
+            existingProduct.Name = product.Name;
+            existingProduct.Description = product.Description;
+            existingProduct.Price = product.Price;
+            existingProduct.StockQuantity = product.StockQuantity;
+            existingProduct.Category = product.Category;
+            existingProduct.ImageUrl = product.ImageUrl;
+            existingProduct.UpdatedAt = DateTime.UtcNow;
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                if (!ProductExists(id))
                 {
-                    ProductId = g.Key,
-                    TotalQuantitySold = g.Sum(oi => oi.Quantity),
-                    TotalRevenue = g.Sum(oi => oi.Quantity * oi.UnitPrice)
-                })
-                .OrderByDescending(x => x.TotalQuantitySold)
-                .Take(count)
-                .Join(_context.Products,
-                      tp => tp.ProductId,
-                      p => p.Id,
-                      (tp, p) => new
-                      {
-                          Product = p,
-                          TotalQuantitySold = tp.TotalQuantitySold,
-                          TotalRevenue = tp.TotalRevenue
-                      })
-                .ToListAsync();
+                    return NotFound();
+                }
+                else
+                {
+                    throw;
+                }
+            }
 
-            return topProducts;
-        }
-
-        // GET: api/Products/Featured
-        [HttpGet("Featured")]
-        public async Task<ActionResult<IEnumerable<Product>>> GetFeaturedProducts([FromQuery] int count = 6)
-        {
-            // En yeni ürünler veya stok durumu iyi olan ürünler
-            var featuredProducts = await _context.Products
-                .Where(p => p.StockQuantity > 0)
-                .OrderByDescending(p => p.CreatedAt)
-                .Take(count)
-                .ToListAsync();
-
-            return featuredProducts;
-        }
-
-        // GET: api/Products/LowStock
-        [HttpGet("LowStock")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<ActionResult<IEnumerable<Product>>> GetLowStockProducts([FromQuery] int threshold = 10)
-        {
-            var lowStockProducts = await _context.Products
-                .Where(p => p.StockQuantity <= threshold && p.StockQuantity > 0)
-                .OrderBy(p => p.StockQuantity)
-                .ToListAsync();
-
-            return lowStockProducts;
-        }
-
-        // GET: api/Products/OutOfStock
-        [HttpGet("OutOfStock")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<ActionResult<IEnumerable<Product>>> GetOutOfStockProducts()
-        {
-            var outOfStockProducts = await _context.Products
-                .Where(p => p.StockQuantity == 0)
-                .ToListAsync();
-
-            return outOfStockProducts;
+            return NoContent();
         }
 
         // POST: api/Products
         [HttpPost]
         [AuthorizeRoles(UserRole.Admin)]
-        public async Task<ActionResult<Product>> CreateProduct(CreateProductModel model)
+        public async Task<ActionResult<Product>> PostProduct(Product product)
         {
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
             }
 
-            var product = new Product
-            {
-                Name = model.Name,
-                Description = model.Description,
-                Price = model.Price,
-                StockQuantity = model.StockQuantity,
-                Category = model.Category,
-                ImageUrl = model.ImageUrl ?? ""
-            };
-
+            product.CreatedAt = DateTime.UtcNow;
             _context.Products.Add(product);
             await _context.SaveChangesAsync();
 
-            return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
-        }
-
-        // POST: api/Products/Bulk
-        [HttpPost("Bulk")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<ActionResult<IEnumerable<Product>>> CreateBulkProducts(List<CreateProductModel> models)
-        {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var products = models.Select(model => new Product
-            {
-                Name = model.Name,
-                Description = model.Description,
-                Price = model.Price,
-                StockQuantity = model.StockQuantity,
-                Category = model.Category,
-                ImageUrl = model.ImageUrl ?? ""
-            }).ToList();
-
-            _context.Products.AddRange(products);
-            await _context.SaveChangesAsync();
-
-            return Ok(products);
-        }
-
-        // PUT: api/Products/5
-        [HttpPut("{id}")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<IActionResult> UpdateProduct(int id, UpdateProductModel model)
-        {
-            var product = await _context.Products.FindAsync(id);
-            if (product == null)
-            {
-                return NotFound();
-            }
-
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            product.Name = model.Name;
-            product.Description = model.Description;
-            product.Price = model.Price;
-            product.StockQuantity = model.StockQuantity;
-            product.Category = model.Category;
-            product.ImageUrl = model.ImageUrl;
-            product.UpdatedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-
-            return NoContent();
-        }
-
-        // PATCH: api/Products/5/Stock
-        [HttpPatch("{id}/Stock")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<IActionResult> UpdateStock(int id, [FromBody] StockUpdateModel model)
-        {
-            var product = await _context.Products.FindAsync(id);
-            if (product == null)
-            {
-                return NotFound();
-            }
-
-            product.StockQuantity = model.StockQuantity;
-            product.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            return NoContent();
-        }
-
-        // PATCH: api/Products/5/Price
-        [HttpPatch("{id}/Price")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<IActionResult> UpdatePrice(int id, [FromBody] PriceUpdateModel model)
-        {
-            var product = await _context.Products.FindAsync(id);
-            if (product == null)
-            {
-                return NotFound();
-            }
-
-            product.Price = model.Price;
-            product.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            return NoContent();
+            return CreatedAtAction("GetProduct", new { id = product.Id }, product);
         }
 
         // DELETE: api/Products/5
@@ -300,16 +187,79 @@ namespace webprogbackend.Controllers
                 return NotFound();
             }
 
-            // Check if product is in any orders or carts
-            var hasOrders = await _context.OrderItems.AnyAsync(oi => oi.ProductId == id);
-            var hasCartItems = await _context.CartItems.AnyAsync(ci => ci.ProductId == id);
-
-            if (hasOrders || hasCartItems)
+            // Check if product is in any orders
+            var isInOrders = await _context.OrderItems.AnyAsync(oi => oi.ProductId == id);
+            if (isInOrders)
             {
-                return BadRequest("Cannot delete product that has been ordered or is in carts");
+                return BadRequest("Cannot delete product that exists in orders. Consider setting stock to 0 instead.");
+            }
+
+            // Check if product is in any carts
+            var isInCarts = await _context.CartItems.AnyAsync(ci => ci.ProductId == id);
+            if (isInCarts)
+            {
+                // Remove from all carts
+                var cartItems = await _context.CartItems.Where(ci => ci.ProductId == id).ToListAsync();
+                _context.CartItems.RemoveRange(cartItems);
             }
 
             _context.Products.Remove(product);
+            await _context.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        // GET: api/Products/Featured
+        [HttpGet("Featured")]
+        public async Task<ActionResult<IEnumerable<Product>>> GetFeaturedProducts([FromQuery] int count = 6)
+        {
+            var featuredProducts = await _context.Products
+                .Where(p => p.StockQuantity > 0)
+                .OrderByDescending(p => p.CreatedAt)
+                .Take(count)
+                .ToListAsync();
+
+            return featuredProducts;
+        }
+
+        // GET: api/Products/Search
+        [HttpGet("Search")]
+        public async Task<ActionResult<IEnumerable<Product>>> SearchProducts([FromQuery] string q)
+        {
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                return BadRequest("Search query cannot be empty");
+            }
+
+            var searchResults = await _context.Products
+                .Where(p => p.Name.Contains(q) ||
+                           p.Description.Contains(q) ||
+                           p.Category.Contains(q))
+                .Take(20)
+                .ToListAsync();
+
+            return searchResults;
+        }
+
+        // PUT: api/Products/5/Stock
+        [HttpPut("{id}/Stock")]
+        [AuthorizeRoles(UserRole.Admin)]
+        public async Task<IActionResult> UpdateStock(int id, [FromBody] UpdateStockModel model)
+        {
+            var product = await _context.Products.FindAsync(id);
+            if (product == null)
+            {
+                return NotFound();
+            }
+
+            if (model.Quantity < 0)
+            {
+                return BadRequest("Stock quantity cannot be negative");
+            }
+
+            product.StockQuantity = model.Quantity;
+            product.UpdatedAt = DateTime.UtcNow;
+
             await _context.SaveChangesAsync();
 
             return NoContent();
@@ -321,27 +271,60 @@ namespace webprogbackend.Controllers
         public async Task<ActionResult<object>> GetProductStats()
         {
             var totalProducts = await _context.Products.CountAsync();
-            var totalInStock = await _context.Products.CountAsync(p => p.StockQuantity > 0);
-            var totalOutOfStock = await _context.Products.CountAsync(p => p.StockQuantity == 0);
-            var totalLowStock = await _context.Products.CountAsync(p => p.StockQuantity <= 10 && p.StockQuantity > 0);
+            var inStockProducts = await _context.Products.CountAsync(p => p.StockQuantity > 0);
+            var outOfStockProducts = await _context.Products.CountAsync(p => p.StockQuantity == 0);
+            var lowStockProducts = await _context.Products.CountAsync(p => p.StockQuantity > 0 && p.StockQuantity <= 10);
+
+            var averagePrice = await _context.Products.AverageAsync(p => p.Price);
+            var totalInventoryValue = await _context.Products.SumAsync(p => p.Price * p.StockQuantity);
+
+            var topSellingProducts = await _context.OrderItems
+                .GroupBy(oi => oi.ProductId)
+                .Select(g => new
+                {
+                    ProductId = g.Key,
+                    TotalSold = g.Sum(oi => oi.Quantity),
+                    Revenue = g.Sum(oi => oi.UnitPrice * oi.Quantity)
+                })
+                .OrderByDescending(x => x.TotalSold)
+                .Take(10)
+                .Join(_context.Products,
+                      tp => tp.ProductId,
+                      p => p.Id,
+                      (tp, p) => new
+                      {
+                          p.Id,
+                          p.Name,
+                          p.Category,
+                          TotalSold = tp.TotalSold,
+                          Revenue = tp.Revenue,
+                          CurrentStock = p.StockQuantity
+                      })
+                .ToListAsync();
+
+            var categoryStats = await _context.Products
+                .GroupBy(p => p.Category)
+                .Select(g => new
+                {
+                    Category = g.Key,
+                    ProductCount = g.Count(),
+                    AveragePrice = g.Average(p => p.Price),
+                    TotalValue = g.Sum(p => p.Price * p.StockQuantity),
+                    InStockCount = g.Count(p => p.StockQuantity > 0)
+                })
+                .OrderBy(x => x.Category)
+                .ToListAsync();
 
             var stats = new
             {
                 TotalProducts = totalProducts,
-                TotalInStock = totalInStock,
-                TotalOutOfStock = totalOutOfStock,
-                TotalLowStock = totalLowStock,
-                AveragePrice = totalProducts > 0 ? await _context.Products.AverageAsync(p => p.Price) : 0,
-                TotalInventoryValue = await _context.Products.SumAsync(p => p.Price * p.StockQuantity),
-                Categories = await _context.Products
-                    .GroupBy(p => p.Category)
-                    .Select(g => new
-                    {
-                        Category = g.Key,
-                        Count = g.Count(),
-                        TotalValue = g.Sum(p => p.Price * p.StockQuantity)
-                    })
-                    .ToListAsync()
+                InStockProducts = inStockProducts,
+                OutOfStockProducts = outOfStockProducts,
+                LowStockProducts = lowStockProducts,
+                AveragePrice = averagePrice,
+                TotalInventoryValue = totalInventoryValue,
+                TopSellingProducts = topSellingProducts,
+                CategoryStats = categoryStats
             };
 
             return stats;
@@ -354,33 +337,8 @@ namespace webprogbackend.Controllers
     }
 
     // DTO Models
-    public class CreateProductModel
+    public class UpdateStockModel
     {
-        public string Name { get; set; }
-        public string Description { get; set; }
-        public decimal Price { get; set; }
-        public int StockQuantity { get; set; }
-        public string Category { get; set; }
-        public string? ImageUrl { get; set; }
-    }
-
-    public class UpdateProductModel
-    {
-        public string Name { get; set; }
-        public string Description { get; set; }
-        public decimal Price { get; set; }
-        public int StockQuantity { get; set; }
-        public string Category { get; set; }
-        public string ImageUrl { get; set; }
-    }
-
-    public class StockUpdateModel
-    {
-        public int StockQuantity { get; set; }
-    }
-
-    public class PriceUpdateModel
-    {
-        public decimal Price { get; set; }
+        public int Quantity { get; set; }
     }
 }

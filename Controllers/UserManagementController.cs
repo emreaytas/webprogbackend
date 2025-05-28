@@ -198,30 +198,7 @@ namespace webprogbackend.Controllers
             return NoContent();
         }
 
-        // PUT: api/Users/ChangePassword
-        [HttpPut("ChangePassword")]
-        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordModel model)
-        {
-            var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
-            var user = await _context.Users.FindAsync(userId);
 
-            if (user == null)
-            {
-                return NotFound();
-            }
-
-            if (!BCrypt.Net.BCrypt.Verify(model.CurrentPassword, user.Password))
-            {
-                return BadRequest("Current password is incorrect");
-            }
-
-            user.Password = BCrypt.Net.BCrypt.HashPassword(model.NewPassword);
-            user.UpdatedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-
-            return NoContent();
-        }
 
         // DELETE: api/Users/5
         [HttpDelete("{id}")]
@@ -318,9 +295,5 @@ namespace webprogbackend.Controllers
         public UserRole Role { get; set; }
     }
 
-    public class ChangePasswordModel
-    {
-        public string CurrentPassword { get; set; }
-        public string NewPassword { get; set; }
-    }
+
 }

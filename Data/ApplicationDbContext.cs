@@ -21,6 +21,11 @@ namespace webprogbackend.Data
         {
             base.OnModelCreating(modelBuilder);
 
+            // Configure User
+            modelBuilder.Entity<User>()
+                .Property(u => u.Role)
+                .HasConversion<string>();
+
             // Configure relationships and constraints
             modelBuilder.Entity<User>()
                 .HasOne(u => u.Cart)
@@ -45,12 +50,30 @@ namespace webprogbackend.Data
             modelBuilder.Entity<Order>()
                 .Property(o => o.TotalAmount)
                 .HasPrecision(18, 2);
-
             modelBuilder.Entity<OrderItem>()
                 .Property(oi => oi.UnitPrice)
                 .HasPrecision(18, 2);
 
-            // Add any additional configurations here
+            // Configure indexes for better performance
+            modelBuilder.Entity<User>()
+                .HasIndex(u => u.Email)
+                .IsUnique();
+
+            modelBuilder.Entity<User>()
+                .HasIndex(u => u.Username)
+                .IsUnique();
+
+            modelBuilder.Entity<Product>()
+                .HasIndex(p => p.Category);
+
+            modelBuilder.Entity<Product>()
+                .HasIndex(p => p.Name);
+
+            // Configure required fields
+            modelBuilder.Entity<Product>()
+                .Property(p => p.Category)
+                .IsRequired()
+                .HasMaxLength(50);
         }
     }
-} 
+}
