@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
@@ -26,12 +27,14 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddHttpClient();
 
-// DeepSeek için özel HttpClient
-builder.Services.AddHttpClient("DeepSeek", client =>
+builder.Services.Configure<DeepSeekSettings>(
+    builder.Configuration.GetSection("DeepSeek"));
+
+builder.Services.AddHttpClient("DeepSeek", (provider, client) =>
 {
-    client.BaseAddress = new Uri("https://api.deepseek.com");
-    client.Timeout = TimeSpan.FromSeconds(30);
-    client.DefaultRequestHeaders.Add("User-Agent", "WebProgBackend/1.0");
+    var settings = provider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
+    client.BaseAddress = new Uri(settings.BaseUrl);
+    client.Timeout = TimeSpan.FromMilliseconds(settings.Timeout);
 });
 
 // Configure JWT Settings

@@ -320,6 +320,120 @@ namespace webprogbackend.Controllers
         }
 
 
+        [HttpGet("check-api-status")]
+        public async Task<ActionResult<object>> CheckApiStatus()
+        {
+            try
+            {
+                var apiKey = _configuration["DeepSeek:ApiKey"];
+
+                if (string.IsNullOrWhiteSpace(apiKey))
+                {
+                    return Ok(new
+                    {
+                        status = "error",
+                        message = "API key not configured",
+                        suggestion = "Please add a valid DeepSeek API key to appsettings.json",
+                        timestamp = DateTime.UtcNow
+                    });
+                }
+
+                if (apiKey == "your-deepseek-api-key-here" || apiKey.Contains("your-"))
+                {
+                    return Ok(new
+                    {
+                        status = "error",
+                        message = "Default API key detected",
+                        suggestion = "Please replace with your actual DeepSeek API key",
+                        timestamp = DateTime.UtcNow
+                    });
+                }
+
+                // Basit API test çağrısı
+                var testRequest = new
+                {
+                    model = "deepseek-chat",
+                    messages = new[]
+                    {
+                new
+                {
+                    role = "user",
+                    content = "Hello"
+                }
+            },
+                    max_tokens = 10
+                };
+
+                var jsonContent = JsonSerializer.Serialize(testRequest);
+                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+                _httpClient.DefaultRequestHeaders.Clear();
+                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+
+                var response = await _httpClient.PostAsync("https://api.deepseek.com/chat/completions", content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
+                switch (response.StatusCode)
+                {
+                    case System.Net.HttpStatusCode.OK:
+                        return Ok(new
+                        {
+                            status = "success",
+                            message = "API key is valid and working",
+                            timestamp = DateTime.UtcNow
+                        });
+
+                    case System.Net.HttpStatusCode.Unauthorized:
+                        return Ok(new
+                        {
+                            status = "error",
+                            message = "Invalid API key",
+                            suggestion = "Please check your DeepSeek API key",
+                            details = responseContent,
+                            timestamp = DateTime.UtcNow
+                        });
+
+                    case System.Net.HttpStatusCode.PaymentRequired:
+                        return Ok(new
+                        {
+                            status = "error",
+                            message = "Insufficient balance",
+                            suggestion = "Please add credits to your DeepSeek account at https://platform.deepseek.com",
+                            details = responseContent,
+                            timestamp = DateTime.UtcNow
+                        });
+
+                    case System.Net.HttpStatusCode.TooManyRequests:
+                        return Ok(new
+                        {
+                            status = "error",
+                            message = "Rate limit exceeded",
+                            suggestion = "Please wait before making more requests",
+                            details = responseContent,
+                            timestamp = DateTime.UtcNow
+                        });
+
+                    default:
+                        return Ok(new
+                        {
+                            status = "error",
+                            message = $"API returned {response.StatusCode}",
+                            details = responseContent,
+                            timestamp = DateTime.UtcNow
+                        });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Ok(new
+                {
+                    status = "error",
+                    message = "Failed to check API status",
+                    error = ex.Message,
+                    timestamp = DateTime.UtcNow
+                });
+            }
+        }
 
         // GET: api/DeepSeek/health
         [HttpGet("health")]
