@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Text;
 using System.Text.Json.Serialization;
 using webprogbackend.Configurations;
@@ -182,7 +183,7 @@ app.UseSwaggerUI(c =>
     c.EnableFilter();
     c.ShowExtensions();
     c.EnableValidator();
-    
+
     // Custom CSS for better appearance
     c.InjectStylesheet("/swagger-ui/custom.css");
 });
@@ -255,15 +256,6 @@ using (var scope = app.Services.CreateScope())
         logger.LogError(ex, "An error occurred while seeding the database");
     }
 }
-
-// Health check endpoint
-app.MapGet("/health", () => new
-{
-    status = "healthy",
-    timestamp = DateTime.UtcNow,
-    version = "1.0.0",
-    environment = app.Environment.EnvironmentName
-}).WithTags("Health");
 
 // API info endpoint
 app.MapGet("/api", () => new
