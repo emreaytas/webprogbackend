@@ -101,17 +101,30 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Web Programming Backend API",
         Version = "v1",
-        Description = "E-commerce backend API with JWT authentication and role-based authorization"
+        Description = "E-commerce backend API with JWT authentication and role-based authorization",
+        Contact = new OpenApiContact
+        {
+            Name = "Developer Team",
+            Email = "developer@example.com"
+        },
+        License = new OpenApiLicense
+        {
+            Name = "MIT License",
+            Url = new Uri("https://opensource.org/licenses/MIT")
+        }
     });
 
     // Add JWT Authentication support to Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+        Description = @"JWT Authorization header using the Bearer scheme. 
+                      Enter 'Bearer' [space] and then your token in the text input below.
+                      Example: 'Bearer 12345abcdef'",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -123,25 +136,56 @@ builder.Services.AddSwaggerGen(c =>
                 {
                     Type = ReferenceType.SecurityScheme,
                     Id = "Bearer"
-                }
+                },
+                Scheme = "oauth2",
+                Name = "Bearer",
+                In = ParameterLocation.Header,
             },
-            Array.Empty<string>()
+            new List<string>()
         }
     });
+
+    // Group endpoints by tags
+    c.TagActionsBy(api => new[] { api.GroupName ?? api.ActionDescriptor.RouteValues["controller"] });
+    c.DocInclusionPredicate((name, api) => true);
+
+    // Enable XML comments if available
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        c.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
+    }
+
+    // Custom operation filters for better documentation
+    c.OperationFilter<SecurityRequirementsOperationFilter>();
 });
 
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
-if (app.Environment.IsDevelopment())
+app.UseSwagger(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Web Programming Backend API V1");
-        c.DefaultModelsExpandDepth(-1); // Hide schemas section by default
-    });
-}
+    c.RouteTemplate = "swagger/{documentName}/swagger.json";
+});
+
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Web Programming Backend API V1");
+    c.RoutePrefix = "swagger";
+    c.DocumentTitle = "Web Programming Backend API";
+    c.DefaultModelsExpandDepth(-1); // Hide schemas section by default
+    c.DefaultModelExpandDepth(2);
+    c.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None);
+    c.DisplayRequestDuration();
+    c.EnableDeepLinking();
+    c.EnableFilter();
+    c.ShowExtensions();
+    c.EnableValidator();
+    
+    // Custom CSS for better appearance
+    c.InjectStylesheet("/swagger-ui/custom.css");
+});
 
 // Global error handling middleware
 app.UseExceptionHandler(errorApp =>
@@ -194,6 +238,9 @@ app.UseAuthorization();
 // Map controllers
 app.MapControllers();
 
+// Swagger redirect from root
+app.MapGet("/", () => Results.Redirect("/swagger"));
+
 // Database seeding
 using (var scope = app.Services.CreateScope())
 {
@@ -214,16 +261,62 @@ app.MapGet("/health", () => new
 {
     status = "healthy",
     timestamp = DateTime.UtcNow,
-    version = "1.0.0"
-});
+    version = "1.0.0",
+    environment = app.Environment.EnvironmentName
+}).WithTags("Health");
 
 // API info endpoint
-app.MapGet("/", () => new
+app.MapGet("/api", () => new
 {
     message = "Web Programming Backend API",
     version = "1.0.0",
     swagger = "/swagger",
-    health = "/health"
-});
+    health = "/health",
+    endpoints = new
+    {
+        auth = "/api/Auth",
+        products = "/api/Products",
+        cart = "/api/Cart",
+        orders = "/api/Orders",
+        users = "/api/Users",
+        dashboard = "/api/Dashboard",
+        categories = "/api/Categories",
+        payment = "/api/Payment",
+        deepseek = "/api/DeepSeek"
+    }
+}).WithTags("Info");
 
 app.Run();
+
+// Custom operation filter for Swagger security requirements
+public class SecurityRequirementsOperationFilter : IOperationFilter
+{
+    public void Apply(OpenApiOperation operation, OperationFilterContext context)
+    {
+        var hasAuthorize = context.MethodInfo.DeclaringType.GetCustomAttributes(true)
+            .Union(context.MethodInfo.GetCustomAttributes(true))
+            .OfType<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
+            .Any();
+
+        if (hasAuthorize)
+        {
+            operation.Responses.Add("401", new OpenApiResponse { Description = "Unauthorized" });
+            operation.Responses.Add("403", new OpenApiResponse { Description = "Forbidden" });
+
+            operation.Security = new List<OpenApiSecurityRequirement>
+            {
+                new OpenApiSecurityRequirement
+                {
+                    [new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference
+                        {
+                            Type = ReferenceType.SecurityScheme,
+                            Id = "Bearer"
+                        }
+                    }] = new[] { "Bearer" }
+                }
+            };
+        }
+    }
+}
