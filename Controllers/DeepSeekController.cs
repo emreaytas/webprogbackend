@@ -32,6 +32,9 @@ namespace webprogbackend.Controllers
                 }
 
                 var apiKey = _configuration["DeepSeek:ApiKey"];
+                var baseUrl = _configuration["DeepSeek:BaseUrl"];
+                var defaultModel = _configuration["DeepSeek:DefaultModel"];
+
                 if (string.IsNullOrWhiteSpace(apiKey))
                 {
                     return StatusCode(500, new { error = "DeepSeek API key not configured" });
@@ -39,7 +42,7 @@ namespace webprogbackend.Controllers
 
                 var deepSeekRequest = new
                 {
-                    model = request.Model ?? "deepseek-chat",
+                    model = request.Model ?? defaultModel ?? "deepseek/deepseek-chat-v3-0324:free",
                     messages = new[]
                     {
                         new
@@ -64,8 +67,14 @@ namespace webprogbackend.Controllers
 
                 _httpClient.DefaultRequestHeaders.Clear();
                 _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
+                _httpClient.DefaultRequestHeaders.Add("X-Title", "E-Commerce Backend API");
+                _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
+                _httpClient.DefaultRequestHeaders.Add("X-Title", "E-Commerce Backend API");
+                _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
+                _httpClient.DefaultRequestHeaders.Add("X-Title", "E-Commerce Backend API");
 
-                var response = await _httpClient.PostAsync("https://api.deepseek.com/chat/completions", content);
+                var response = await _httpClient.PostAsync(baseUrl, content);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -148,7 +157,7 @@ namespace webprogbackend.Controllers
                 {
                     Message = request.Text,
                     SystemPrompt = systemPrompt,
-                    Model = "deepseek-chat",
+                    Model = _configuration["DeepSeek:DefaultModel"],
                     MaxTokens = 1500,
                     Temperature = 0.3
                 };
@@ -189,7 +198,7 @@ namespace webprogbackend.Controllers
                 {
                     Message = $"Please review this {request.Language ?? "code"}:\n\n```{request.Language ?? "text"}\n{request.Code}\n```",
                     SystemPrompt = systemPrompt,
-                    Model = "deepseek-coder",
+                    Model = _configuration["DeepSeek:DefaultModel"],
                     MaxTokens = 2000,
                     Temperature = 0.2
                 };
@@ -209,13 +218,13 @@ namespace webprogbackend.Controllers
         {
             var models = new[]
             {
-                "deepseek-chat",
-                "deepseek-coder"
+                "deepseek/deepseek-chat-v3-0324:free",
+                "deepseek/deepseek-coder",
+                "deepseek/deepseek-chat"
             };
 
             return Ok(models);
         }
-
 
         [HttpPost("simple-chat")]
         public async Task<ActionResult<SimpleChatResponse>> SimpleChat([FromBody] SimpleChatRequest request)
@@ -228,6 +237,9 @@ namespace webprogbackend.Controllers
                 }
 
                 var apiKey = _configuration["DeepSeek:ApiKey"];
+                var baseUrl = _configuration["DeepSeek:BaseUrl"];
+                var defaultModel = _configuration["DeepSeek:DefaultModel"];
+
                 if (string.IsNullOrWhiteSpace(apiKey))
                 {
                     return StatusCode(500, new { error = "DeepSeek API key not configured" });
@@ -242,20 +254,20 @@ namespace webprogbackend.Controllers
 
                 var deepSeekRequest = new
                 {
-                    model = "deepseek-chat",
+                    model = defaultModel ?? "deepseek/deepseek-chat-v3-0324:free",
                     messages = new[]
                     {
-                new
-                {
-                    role = "system",
-                    content = systemPrompt
-                },
-                new
-                {
-                    role = "user",
-                    content = request.Message
-                }
-            },
+                        new
+                        {
+                            role = "system",
+                            content = systemPrompt
+                        },
+                        new
+                        {
+                            role = "user",
+                            content = request.Message
+                        }
+                    },
                     max_tokens = 500,
                     temperature = 0.7,
                     top_p = 0.9,
@@ -268,7 +280,7 @@ namespace webprogbackend.Controllers
                 _httpClient.DefaultRequestHeaders.Clear();
                 _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
 
-                var response = await _httpClient.PostAsync("https://api.deepseek.com/chat/completions", content);
+                var response = await _httpClient.PostAsync(baseUrl, content);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -319,13 +331,14 @@ namespace webprogbackend.Controllers
             }
         }
 
-
         [HttpGet("check-api-status")]
         public async Task<ActionResult<object>> CheckApiStatus()
         {
             try
             {
                 var apiKey = _configuration["DeepSeek:ApiKey"];
+                var baseUrl = _configuration["DeepSeek:BaseUrl"];
+                var defaultModel = _configuration["DeepSeek:DefaultModel"];
 
                 if (string.IsNullOrWhiteSpace(apiKey))
                 {
@@ -352,15 +365,15 @@ namespace webprogbackend.Controllers
                 // Basit API test çağrısı
                 var testRequest = new
                 {
-                    model = "deepseek-chat",
+                    model = defaultModel ?? "deepseek/deepseek-chat-v3-0324:free",
                     messages = new[]
                     {
-                new
-                {
-                    role = "user",
-                    content = "Hello"
-                }
-            },
+                        new
+                        {
+                            role = "user",
+                            content = "Hello"
+                        }
+                    },
                     max_tokens = 10
                 };
 
@@ -370,7 +383,7 @@ namespace webprogbackend.Controllers
                 _httpClient.DefaultRequestHeaders.Clear();
                 _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
 
-                var response = await _httpClient.PostAsync("https://api.deepseek.com/chat/completions", content);
+                var response = await _httpClient.PostAsync(baseUrl, content);
                 var responseContent = await response.Content.ReadAsStringAsync();
 
                 switch (response.StatusCode)
@@ -388,7 +401,7 @@ namespace webprogbackend.Controllers
                         {
                             status = "error",
                             message = "Invalid API key",
-                            suggestion = "Please check your DeepSeek API key",
+                            suggestion = "Please check your API key at https://openrouter.ai/keys",
                             details = responseContent,
                             timestamp = DateTime.UtcNow
                         });
@@ -398,7 +411,7 @@ namespace webprogbackend.Controllers
                         {
                             status = "error",
                             message = "Insufficient balance",
-                            suggestion = "Please add credits to your DeepSeek account at https://platform.deepseek.com",
+                            suggestion = "Please add credits to your OpenRouter account at https://openrouter.ai/credits",
                             details = responseContent,
                             timestamp = DateTime.UtcNow
                         });
@@ -494,7 +507,6 @@ namespace webprogbackend.Controllers
         }
     }
 
-
     public class SimpleChatRequest
     {
         public string Message { get; set; }
@@ -505,6 +517,7 @@ namespace webprogbackend.Controllers
         public string Response { get; set; }
         public DateTime Timestamp { get; set; }
     }
+
     // DTO Models
     public class DeepSeekRequest
     {
