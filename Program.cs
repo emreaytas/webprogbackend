@@ -27,21 +27,6 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddHttpClient();
 
-builder.Services.AddHttpClient("DeepSeek", (provider, client) =>
-{
-    var deepSeekSettings = provider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
-
-    if (!string.IsNullOrEmpty(deepSeekSettings.BaseUrl))
-    {
-        client.Timeout = TimeSpan.FromMilliseconds(deepSeekSettings.Timeout);
-    }
-    else
-    {
-        client.Timeout = TimeSpan.FromSeconds(30);
-    }
-});
-
-
 // Configure JWT Settings
 var jwtSettings = new JwtSettings();
 builder.Configuration.GetSection("JwtSettings").Bind(jwtSettings);
@@ -169,6 +154,18 @@ builder.Services.AddSwaggerGen(c =>
     // Custom operation filters for better documentation
     c.OperationFilter<SecurityRequirementsOperationFilter>();
 });
+
+
+builder.Services.Configure<DeepSeekSettings>(
+    builder.Configuration.GetSection("DeepSeek"));
+
+// HttpClient factory ile DeepSeek client'ýný yapýlandýr
+builder.Services.AddHttpClient("DeepSeek", (provider, client) =>
+{
+    var deepSeekSettings = provider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
+    client.Timeout = TimeSpan.FromMilliseconds(deepSeekSettings.Timeout);
+});
+
 
 var app = builder.Build();
 

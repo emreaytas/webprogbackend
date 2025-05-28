@@ -2,6 +2,9 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Text;
 using System.Text.Json;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Options;
+using webprogbackend.Models;
 
 namespace webprogbackend.Controllers
 {
@@ -10,45 +13,46 @@ namespace webprogbackend.Controllers
     public class DeepSeekController : ControllerBase
     {
         private readonly HttpClient _httpClient;
-        private readonly IConfiguration _configuration;
+        private readonly DeepSeekSettings _deepSeekSettings;
         private readonly ILogger<DeepSeekController> _logger;
 
-        public DeepSeekController(HttpClient httpClient, IConfiguration configuration, ILogger<DeepSeekController> logger)
+        public DeepSeekController(
+            IHttpClientFactory httpClientFactory,
+            IOptions<DeepSeekSettings> deepSeekSettings,
+            ILogger<DeepSeekController> logger)
         {
-            _httpClient = httpClient;
-            _configuration = configuration;
+            _httpClient = httpClientFactory.CreateClient("DeepSeek");
+            _deepSeekSettings = deepSeekSettings.Value;
             _logger = logger;
         }
 
-        // POST: api/DeepSeek/chat
+        /// <summary>
+        /// Genel sohbet endpoint'i - E-ticaret odaklı asistan
+        /// </summary>
         [HttpPost("chat")]
         public async Task<ActionResult<DeepSeekResponse>> Chat([FromBody] DeepSeekRequest request)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(request.Message))
+                if (!ModelState.IsValid)
                 {
-                    return BadRequest(new { error = "Message cannot be empty" });
+                    return BadRequest(ModelState);
                 }
 
-                var apiKey = _configuration["DeepSeek:ApiKey"];
-                var baseUrl = _configuration["DeepSeek:BaseUrl"];
-                var defaultModel = _configuration["DeepSeek:DefaultModel"];
-
-                if (string.IsNullOrWhiteSpace(apiKey))
+                if (string.IsNullOrWhiteSpace(_deepSeekSettings.ApiKey))
                 {
                     return StatusCode(500, new { error = "DeepSeek API key not configured" });
                 }
 
                 var deepSeekRequest = new
                 {
-                    model = request.Model ?? defaultModel ?? "deepseek/deepseek-chat-v3-0324:free",
+                    model = request.Model ?? _deepSeekSettings.DefaultModel,
                     messages = new[]
                     {
                         new
                         {
                             role = "system",
-                            content = request.SystemPrompt ?? "You are a helpful assistant that provides accurate and concise responses."
+                            content = request.SystemPrompt ?? GetDefaultSystemPrompt()
                         },
                         new
                         {
@@ -56,64 +60,14 @@ namespace webprogbackend.Controllers
                             content = request.Message
                         }
                     },
-                    max_tokens = request.MaxTokens ?? 1000,
-                    temperature = request.Temperature ?? 0.7,
-                    top_p = request.TopP ?? 0.9,
+                    max_tokens = Math.Min(request.MaxTokens ?? 1000, 4000),
+                    temperature = Math.Max(0.0, Math.Min(request.Temperature ?? 0.7, 2.0)),
+                    top_p = Math.Max(0.0, Math.Min(request.TopP ?? 0.9, 1.0)),
                     stream = false
                 };
 
-                var jsonContent = JsonSerializer.Serialize(deepSeekRequest);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-                _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
-                _httpClient.DefaultRequestHeaders.Add("X-Title", "E-Commerce Backend API");
-                _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
-                _httpClient.DefaultRequestHeaders.Add("X-Title", "E-Commerce Backend API");
-                _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
-                _httpClient.DefaultRequestHeaders.Add("X-Title", "E-Commerce Backend API");
-
-                var response = await _httpClient.PostAsync(baseUrl, content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError($"DeepSeek API error: {response.StatusCode} - {errorContent}");
-
-                    return StatusCode(500, new
-                    {
-                        error = "Failed to get response from DeepSeek API",
-                        details = errorContent,
-                        statusCode = response.StatusCode
-                    });
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                var apiResponse = JsonSerializer.Deserialize<DeepSeekApiResponse>(responseContent, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-
-                if (apiResponse?.Choices == null || !apiResponse.Choices.Any())
-                {
-                    return StatusCode(500, new { error = "No response received from DeepSeek API" });
-                }
-
-                var result = new DeepSeekResponse
-                {
-                    Message = apiResponse.Choices[0].Message.Content,
-                    Model = apiResponse.Model,
-                    Usage = new UsageInfo
-                    {
-                        PromptTokens = apiResponse.Usage?.PromptTokens ?? 0,
-                        CompletionTokens = apiResponse.Usage?.CompletionTokens ?? 0,
-                        TotalTokens = apiResponse.Usage?.TotalTokens ?? 0
-                    },
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                return Ok(result);
+                var response = await SendDeepSeekRequest(deepSeekRequest);
+                return Ok(response);
             }
             catch (HttpRequestException ex)
             {
@@ -132,135 +86,28 @@ namespace webprogbackend.Controllers
             }
         }
 
-        // POST: api/DeepSeek/analyze
-        [HttpPost("analyze")]
-        public async Task<ActionResult<DeepSeekResponse>> AnalyzeText([FromBody] TextAnalysisRequest request)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(request.Text))
-                {
-                    return BadRequest(new { error = "Text cannot be empty" });
-                }
-
-                var systemPrompt = request.AnalysisType.ToLower() switch
-                {
-                    "sentiment" => "You are a sentiment analysis expert. Analyze the sentiment of the given text and provide a detailed explanation. Classify it as positive, negative, or neutral, and explain your reasoning.",
-                    "summary" => "You are a text summarization expert. Provide a concise and accurate summary of the given text, capturing the key points and main ideas.",
-                    "keywords" => "You are a keyword extraction expert. Extract the most important keywords and key phrases from the given text. Present them in order of importance.",
-                    "translation" => $"You are a professional translator. Translate the given text to {request.TargetLanguage ?? "English"}. Provide an accurate and natural translation.",
-                    "grammar" => "You are a grammar and writing expert. Check the given text for grammar, spelling, and style issues. Provide corrections and suggestions for improvement.",
-                    _ => "You are a text analysis expert. Analyze the given text and provide insights about its content, structure, and meaning."
-                };
-
-                var analysisRequest = new DeepSeekRequest
-                {
-                    Message = request.Text,
-                    SystemPrompt = systemPrompt,
-                    Model = _configuration["DeepSeek:DefaultModel"],
-                    MaxTokens = 1500,
-                    Temperature = 0.3
-                };
-
-                return await Chat(analysisRequest);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error occurred while analyzing text");
-                return StatusCode(500, new { error = "An error occurred during text analysis", details = ex.Message });
-            }
-        }
-
-        // POST: api/DeepSeek/code-review
-        [HttpPost("code-review")]
-        [Authorize] // Sadece authenticated kullanıcılar
-        public async Task<ActionResult<DeepSeekResponse>> ReviewCode([FromBody] CodeReviewRequest request)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(request.Code))
-                {
-                    return BadRequest(new { error = "Code cannot be empty" });
-                }
-
-                var systemPrompt = $@"You are an expert code reviewer specializing in {request.Language ?? "general programming"}. 
-                Review the provided code and analyze it for:
-                1. Code quality and best practices
-                2. Potential bugs and issues
-                3. Performance optimizations
-                4. Security vulnerabilities
-                5. Code readability and maintainability
-                6. Suggested improvements
-
-                Provide specific, actionable feedback with examples where possible.";
-
-                var reviewRequest = new DeepSeekRequest
-                {
-                    Message = $"Please review this {request.Language ?? "code"}:\n\n```{request.Language ?? "text"}\n{request.Code}\n```",
-                    SystemPrompt = systemPrompt,
-                    Model = _configuration["DeepSeek:DefaultModel"],
-                    MaxTokens = 2000,
-                    Temperature = 0.2
-                };
-
-                return await Chat(reviewRequest);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error occurred while reviewing code");
-                return StatusCode(500, new { error = "An error occurred during code review", details = ex.Message });
-            }
-        }
-
-        // GET: api/DeepSeek/models
-        [HttpGet("models")]
-        public ActionResult<IEnumerable<string>> GetAvailableModels()
-        {
-            var models = new[]
-            {
-                "deepseek/deepseek-chat-v3-0324:free",
-                "deepseek/deepseek-coder",
-                "deepseek/deepseek-chat"
-            };
-
-            return Ok(models);
-        }
-
+        /// <summary>
+        /// Basit sohbet - E-ticaret müşteri desteği için optimize edilmiş
+        /// </summary>
         [HttpPost("simple-chat")]
         public async Task<ActionResult<SimpleChatResponse>> SimpleChat([FromBody] SimpleChatRequest request)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(request.Message))
+                if (!ModelState.IsValid)
                 {
-                    return BadRequest(new { error = "Message cannot be empty" });
+                    return BadRequest(ModelState);
                 }
-
-                var apiKey = _configuration["DeepSeek:ApiKey"];
-                var baseUrl = _configuration["DeepSeek:BaseUrl"];
-                var defaultModel = _configuration["DeepSeek:DefaultModel"];
-
-                if (string.IsNullOrWhiteSpace(apiKey))
-                {
-                    return StatusCode(500, new { error = "DeepSeek API key not configured" });
-                }
-
-                // E-ticaret bağlamında yardımcı sistem promptu
-                var systemPrompt = @"You are a helpful e-commerce assistant for an online store. 
-        You help customers find products, provide recommendations, and answer shopping-related questions.
-        Be friendly, helpful, and try to suggest relevant products when appropriate.
-        If someone asks about a specific need (like hair cutting), recommend suitable product categories.
-        Keep responses concise but informative.";
 
                 var deepSeekRequest = new
                 {
-                    model = defaultModel ?? "deepseek/deepseek-chat-v3-0324:free",
+                    model = _deepSeekSettings.DefaultModel,
                     messages = new[]
                     {
                         new
                         {
                             role = "system",
-                            content = systemPrompt
+                            content = GetECommerceSystemPrompt()
                         },
                         new
                         {
@@ -274,261 +121,446 @@ namespace webprogbackend.Controllers
                     stream = false
                 };
 
-                var jsonContent = JsonSerializer.Serialize(deepSeekRequest);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+                var result = await SendDeepSeekRequest(deepSeekRequest);
 
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                var response = await _httpClient.PostAsync(baseUrl, content);
-
-                if (!response.IsSuccessStatusCode)
+                return Ok(new SimpleChatResponse
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError($"DeepSeek API error: {response.StatusCode} - {errorContent}");
-
-                    return StatusCode(500, new
-                    {
-                        error = "Failed to get response from DeepSeek API",
-                        details = errorContent,
-                        statusCode = response.StatusCode
-                    });
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                var apiResponse = JsonSerializer.Deserialize<DeepSeekApiResponse>(responseContent, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-
-                if (apiResponse?.Choices == null || !apiResponse.Choices.Any())
-                {
-                    return StatusCode(500, new { error = "No response received from DeepSeek API" });
-                }
-
-                var result = new SimpleChatResponse
-                {
-                    Response = apiResponse.Choices[0].Message.Content,
+                    Response = result.Message,
                     Timestamp = DateTime.UtcNow
-                };
-
-                return Ok(result);
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogError(ex, "HTTP request failed while calling DeepSeek API");
-                return StatusCode(500, new { error = "Network error occurred", details = ex.Message });
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex, "Failed to parse DeepSeek API response");
-                return StatusCode(500, new { error = "Invalid response format from DeepSeek API", details = ex.Message });
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error occurred while processing DeepSeek request");
-                return StatusCode(500, new { error = "An unexpected error occurred", details = ex.Message });
+                _logger.LogError(ex, "Error in simple chat");
+                return StatusCode(500, new { error = "Chat service temporarily unavailable", details = ex.Message });
             }
         }
 
-        [HttpGet("check-api-status")]
-        public async Task<ActionResult<object>> CheckApiStatus()
+        /// <summary>
+        /// Ürün önerisi - Kullanıcı ihtiyaçlarına göre ürün kategorileri önerir
+        /// </summary>
+        [HttpPost("product-recommendation")]
+        public async Task<ActionResult<ProductRecommendationResponse>> GetProductRecommendation([FromBody] ProductRecommendationRequest request)
         {
             try
             {
-                var apiKey = _configuration["DeepSeek:ApiKey"];
-                var baseUrl = _configuration["DeepSeek:BaseUrl"];
-                var defaultModel = _configuration["DeepSeek:DefaultModel"];
-
-                if (string.IsNullOrWhiteSpace(apiKey))
+                if (!ModelState.IsValid)
                 {
-                    return Ok(new
-                    {
-                        status = "error",
-                        message = "API key not configured",
-                        suggestion = "Please add a valid DeepSeek API key to appsettings.json",
-                        timestamp = DateTime.UtcNow
-                    });
+                    return BadRequest(ModelState);
                 }
 
-                if (apiKey == "your-deepseek-api-key-here" || apiKey.Contains("your-"))
-                {
-                    return Ok(new
-                    {
-                        status = "error",
-                        message = "Default API key detected",
-                        suggestion = "Please replace with your actual DeepSeek API key",
-                        timestamp = DateTime.UtcNow
-                    });
-                }
+                var systemPrompt = @"You are an expert e-commerce product recommendation assistant. 
+                Based on user needs, recommend suitable product categories and provide helpful shopping advice.
+                Focus on the categories available in our store: Bilgisayar, Telefon, Ses, Tablet, Giyilebilir, Depolama.
+                Provide specific, actionable recommendations in Turkish.
+                Keep responses concise and helpful.";
 
-                // Basit API test çağrısı
-                var testRequest = new
+                var deepSeekRequest = new
                 {
-                    model = defaultModel ?? "deepseek/deepseek-chat-v3-0324:free",
+                    model = _deepSeekSettings.DefaultModel,
                     messages = new[]
                     {
                         new
                         {
+                            role = "system",
+                            content = systemPrompt
+                        },
+                        new
+                        {
                             role = "user",
-                            content = "Hello"
+                            content = $"Kullanıcı ihtiyacı: {request.UserNeed}. Bütçe: {request.Budget:C}. Öneri ver."
                         }
                     },
-                    max_tokens = 10
+                    max_tokens = 800,
+                    temperature = 0.3,
+                    stream = false
                 };
 
-                var jsonContent = JsonSerializer.Serialize(testRequest);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+                var result = await SendDeepSeekRequest(deepSeekRequest);
 
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                var response = await _httpClient.PostAsync(baseUrl, content);
-                var responseContent = await response.Content.ReadAsStringAsync();
-
-                switch (response.StatusCode)
+                return Ok(new ProductRecommendationResponse
                 {
-                    case System.Net.HttpStatusCode.OK:
-                        return Ok(new
-                        {
-                            status = "success",
-                            message = "API key is valid and working",
-                            timestamp = DateTime.UtcNow
-                        });
-
-                    case System.Net.HttpStatusCode.Unauthorized:
-                        return Ok(new
-                        {
-                            status = "error",
-                            message = "Invalid API key",
-                            suggestion = "Please check your API key at https://openrouter.ai/keys",
-                            details = responseContent,
-                            timestamp = DateTime.UtcNow
-                        });
-
-                    case System.Net.HttpStatusCode.PaymentRequired:
-                        return Ok(new
-                        {
-                            status = "error",
-                            message = "Insufficient balance",
-                            suggestion = "Please add credits to your OpenRouter account at https://openrouter.ai/credits",
-                            details = responseContent,
-                            timestamp = DateTime.UtcNow
-                        });
-
-                    case System.Net.HttpStatusCode.TooManyRequests:
-                        return Ok(new
-                        {
-                            status = "error",
-                            message = "Rate limit exceeded",
-                            suggestion = "Please wait before making more requests",
-                            details = responseContent,
-                            timestamp = DateTime.UtcNow
-                        });
-
-                    default:
-                        return Ok(new
-                        {
-                            status = "error",
-                            message = $"API returned {response.StatusCode}",
-                            details = responseContent,
-                            timestamp = DateTime.UtcNow
-                        });
-                }
+                    Recommendation = result.Message,
+                    Categories = ExtractCategories(result.Message),
+                    Timestamp = DateTime.UtcNow
+                });
             }
             catch (Exception ex)
             {
-                return Ok(new
-                {
-                    status = "error",
-                    message = "Failed to check API status",
-                    error = ex.Message,
-                    timestamp = DateTime.UtcNow
-                });
+                _logger.LogError(ex, "Error in product recommendation");
+                return StatusCode(500, new { error = "Recommendation service temporarily unavailable" });
             }
         }
 
-        // GET: api/DeepSeek/health
-        [HttpGet("health")]
-        public async Task<ActionResult<object>> CheckHealth()
+        /// <summary>
+        /// Metin analizi - Müşteri yorumları, geri bildirimler için
+        /// </summary>
+        [HttpPost("analyze-text")]
+        [Authorize] // Sadece yetkili kullanıcılar
+        public async Task<ActionResult<TextAnalysisResponse>> AnalyzeText([FromBody] TextAnalysisRequest request)
         {
             try
             {
-                var apiKey = _configuration["DeepSeek:ApiKey"];
-                if (string.IsNullOrWhiteSpace(apiKey))
+                if (!ModelState.IsValid)
                 {
-                    return Ok(new
-                    {
-                        status = "error",
-                        message = "DeepSeek API key not configured",
-                        timestamp = DateTime.UtcNow
-                    });
+                    return BadRequest(ModelState);
                 }
 
-                // Simple test request
-                var testRequest = new DeepSeekRequest
+                var systemPrompt = GetAnalysisSystemPrompt(request.AnalysisType);
+
+                var deepSeekRequest = new
                 {
-                    Message = "Hello, can you respond with 'API is working'?",
-                    MaxTokens = 50,
-                    Temperature = 0.1
+                    model = _deepSeekSettings.DefaultModel,
+                    messages = new[]
+                    {
+                        new
+                        {
+                            role = "system",
+                            content = systemPrompt
+                        },
+                        new
+                        {
+                            role = "user",
+                            content = request.Text
+                        }
+                    },
+                    max_tokens = 1500,
+                    temperature = 0.3,
+                    stream = false
                 };
 
-                var result = await Chat(testRequest);
+                var result = await SendDeepSeekRequest(deepSeekRequest);
 
-                if (result.Result is OkObjectResult)
+                return Ok(new TextAnalysisResponse
                 {
-                    return Ok(new
+                    AnalysisResult = result.Message,
+                    AnalysisType = request.AnalysisType,
+                    Confidence = CalculateConfidence(result.Usage.TotalTokens),
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in text analysis");
+                return StatusCode(500, new { error = "Analysis service temporarily unavailable" });
+            }
+        }
+
+        /// <summary>
+        /// Kod inceleme - Admin kullanıcılar için
+        /// </summary>
+        [HttpPost("code-review")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<CodeReviewResponse>> ReviewCode([FromBody] CodeReviewRequest request)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var systemPrompt = $@"You are an expert code reviewer specializing in {request.Language ?? "general programming"}. 
+                Review the provided code for:
+                1. Security vulnerabilities
+                2. Performance optimizations
+                3. Best practices compliance
+                4. Code quality and maintainability
+                5. Potential bugs
+
+                Provide specific, actionable feedback with examples.
+                Focus on critical issues first.";
+
+                var deepSeekRequest = new
+                {
+                    model = _deepSeekSettings.DefaultModel,
+                    messages = new[]
                     {
-                        status = "healthy",
-                        message = "DeepSeek API is accessible",
-                        timestamp = DateTime.UtcNow
+                        new
+                        {
+                            role = "system",
+                            content = systemPrompt
+                        },
+                        new
+                        {
+                            role = "user",
+                            content = $"Review this {request.Language ?? "code"}:\n\n```{request.Language ?? "text"}\n{request.Code}\n```"
+                        }
+                    },
+                    max_tokens = 2000,
+                    temperature = 0.2,
+                    stream = false
+                };
+
+                var result = await SendDeepSeekRequest(deepSeekRequest);
+
+                return Ok(new CodeReviewResponse
+                {
+                    ReviewResult = result.Message,
+                    Language = request.Language,
+                    CodeLength = request.Code.Length,
+                    ReviewTimestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in code review");
+                return StatusCode(500, new { error = "Code review service temporarily unavailable" });
+            }
+        }
+
+        /// <summary>
+        /// API durumu kontrolü
+        /// </summary>
+        [HttpGet("status")]
+        public async Task<ActionResult<ApiStatusResponse>> GetApiStatus()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_deepSeekSettings.ApiKey))
+                {
+                    return Ok(new ApiStatusResponse
+                    {
+                        Status = "error",
+                        Message = "API key not configured",
+                        Suggestion = "Please add a valid DeepSeek API key to appsettings.json",
+                        Timestamp = DateTime.UtcNow
                     });
                 }
-                else
+
+                if (_deepSeekSettings.ApiKey.Contains("your-") || _deepSeekSettings.ApiKey.Length < 20)
                 {
-                    return Ok(new
+                    return Ok(new ApiStatusResponse
                     {
-                        status = "error",
-                        message = "DeepSeek API test failed",
-                        timestamp = DateTime.UtcNow
+                        Status = "error",
+                        Message = "Invalid API key format",
+                        Suggestion = "Please replace with your actual OpenRouter API key",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+
+                // Basit test isteği
+                var testRequest = new
+                {
+                    model = _deepSeekSettings.DefaultModel,
+                    messages = new[]
+                    {
+                        new { role = "user", content = "Test" }
+                    },
+                    max_tokens = 5
+                };
+
+                try
+                {
+                    await SendDeepSeekRequest(testRequest);
+                    return Ok(new ApiStatusResponse
+                    {
+                        Status = "healthy",
+                        Message = "API is working correctly",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+                catch (HttpRequestException ex) when (ex.Message.Contains("401"))
+                {
+                    return Ok(new ApiStatusResponse
+                    {
+                        Status = "error",
+                        Message = "Invalid API key",
+                        Suggestion = "Please check your API key at https://openrouter.ai/keys",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+                catch (HttpRequestException ex) when (ex.Message.Contains("402"))
+                {
+                    return Ok(new ApiStatusResponse
+                    {
+                        Status = "error",
+                        Message = "Insufficient credits",
+                        Suggestion = "Please add credits at https://openrouter.ai/credits",
+                        Timestamp = DateTime.UtcNow
                     });
                 }
             }
             catch (Exception ex)
             {
-                return Ok(new
+                _logger.LogError(ex, "Error checking API status");
+                return Ok(new ApiStatusResponse
                 {
-                    status = "error",
-                    message = "DeepSeek API health check failed",
-                    error = ex.Message,
-                    timestamp = DateTime.UtcNow
+                    Status = "error",
+                    Message = "Status check failed",
+                    Error = ex.Message,
+                    Timestamp = DateTime.UtcNow
                 });
             }
         }
+
+        /// <summary>
+        /// Kullanılabilir modeller listesi
+        /// </summary>
+        [HttpGet("models")]
+        public ActionResult<IEnumerable<string>> GetAvailableModels()
+        {
+            var models = new[]
+            {
+                "deepseek/deepseek-chat-v3-0324:free",
+                "deepseek/deepseek-coder",
+                "deepseek/deepseek-chat",
+                "anthropic/claude-3-haiku:beta",
+                "openai/gpt-3.5-turbo"
+            };
+
+            return Ok(models);
+        }
+
+        #region Private Methods
+
+        private async Task<DeepSeekResponse> SendDeepSeekRequest(object request)
+        {
+            var jsonContent = JsonSerializer.Serialize(request);
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+            _httpClient.DefaultRequestHeaders.Clear();
+            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_deepSeekSettings.ApiKey}");
+            _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://webprogbackend.com");
+            _httpClient.DefaultRequestHeaders.Add("X-Title", "Web Programming E-Commerce Backend");
+
+            var response = await _httpClient.PostAsync(_deepSeekSettings.BaseUrl, content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError($"DeepSeek API error: {response.StatusCode} - {errorContent}");
+                throw new HttpRequestException($"API call failed: {response.StatusCode}");
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            var apiResponse = JsonSerializer.Deserialize<DeepSeekApiResponse>(responseContent, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+
+            if (apiResponse?.Choices == null || !apiResponse.Choices.Any())
+            {
+                throw new InvalidOperationException("No response received from DeepSeek API");
+            }
+
+            return new DeepSeekResponse
+            {
+                Message = apiResponse.Choices[0].Message.Content,
+                Model = apiResponse.Model,
+                Usage = new UsageInfo
+                {
+                    PromptTokens = apiResponse.Usage?.PromptTokens ?? 0,
+                    CompletionTokens = apiResponse.Usage?.CompletionTokens ?? 0,
+                    TotalTokens = apiResponse.Usage?.TotalTokens ?? 0
+                },
+                CreatedAt = DateTime.UtcNow
+            };
+        }
+
+        private string GetDefaultSystemPrompt()
+        {
+            return @"You are a helpful AI assistant for an e-commerce platform. 
+            You help customers with product recommendations, shopping questions, and general inquiries.
+            Be friendly, professional, and focus on providing valuable shopping assistance.
+            Respond in Turkish if the user writes in Turkish, otherwise respond in English.";
+        }
+
+        private string GetECommerceSystemPrompt()
+        {
+            return @"Sen bir e-ticaret platformu için müşteri hizmetleri asistanısın. 
+            Müşterilere ürün önerileri, alışveriş konularında yardım ve genel sorularını yanıtlıyorsun.
+            Mağazamızda şu kategoriler bulunuyor: Bilgisayar, Telefon, Ses, Tablet, Giyilebilir, Depolama.
+            Dostça, profesyonel ol ve değerli alışveriş yardımı sağlamaya odaklan.
+            Yanıtlarını kısa ve öz tut.";
+        }
+
+        private string GetAnalysisSystemPrompt(string analysisType)
+        {
+            return analysisType.ToLower() switch
+            {
+                "sentiment" => "You are a sentiment analysis expert. Analyze the sentiment and provide detailed insights.",
+                "summary" => "You are a text summarization expert. Provide concise, accurate summaries.",
+                "keywords" => "You are a keyword extraction expert. Extract and rank important keywords.",
+                "grammar" => "You are a grammar expert. Check for errors and suggest improvements.",
+                _ => "You are a text analysis expert. Provide comprehensive analysis of the given text."
+            };
+        }
+
+        private List<string> ExtractCategories(string recommendation)
+        {
+            var categories = new List<string> { "Bilgisayar", "Telefon", "Ses", "Tablet", "Giyilebilir", "Depolama" };
+            return categories.Where(cat => recommendation.Contains(cat, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        private double CalculateConfidence(int totalTokens)
+        {
+            // Basit güven skoru hesaplama
+            return Math.Min(0.95, 0.5 + (totalTokens / 1000.0) * 0.3);
+        }
+
+        #endregion
+    }
+
+    #region DTO Models
+
+    public class DeepSeekRequest
+    {
+        [Required]
+        [StringLength(4000, MinimumLength = 1)]
+        public string Message { get; set; }
+
+        public string? SystemPrompt { get; set; }
+
+        public string? Model { get; set; }
+
+        [Range(1, 4000)]
+        public int? MaxTokens { get; set; }
+
+        [Range(0.0, 2.0)]
+        public double? Temperature { get; set; }
+
+        [Range(0.0, 1.0)]
+        public double? TopP { get; set; }
     }
 
     public class SimpleChatRequest
     {
+        [Required]
+        [StringLength(1000, MinimumLength = 1)]
         public string Message { get; set; }
     }
 
-    public class SimpleChatResponse
+    public class ProductRecommendationRequest
     {
-        public string Response { get; set; }
-        public DateTime Timestamp { get; set; }
+        [Required]
+        [StringLength(500, MinimumLength = 5)]
+        public string UserNeed { get; set; }
+
+        [Range(0, 1000000)]
+        public decimal Budget { get; set; }
     }
 
-    // DTO Models
-    public class DeepSeekRequest
+    public class TextAnalysisRequest
     {
-        public string Message { get; set; }
-        public string? SystemPrompt { get; set; }
-        public string? Model { get; set; }
-        public int? MaxTokens { get; set; }
-        public double? Temperature { get; set; }
-        public double? TopP { get; set; }
+        [Required]
+        [StringLength(5000, MinimumLength = 10)]
+        public string Text { get; set; }
+
+        [Required]
+        public string AnalysisType { get; set; } // sentiment, summary, keywords, grammar
     }
 
+    public class CodeReviewRequest
+    {
+        [Required]
+        [StringLength(10000, MinimumLength = 10)]
+        public string Code { get; set; }
+
+        public string? Language { get; set; }
+    }
+
+    // Response Models
     public class DeepSeekResponse
     {
         public string Message { get; set; }
@@ -537,17 +569,42 @@ namespace webprogbackend.Controllers
         public DateTime CreatedAt { get; set; }
     }
 
-    public class TextAnalysisRequest
+    public class SimpleChatResponse
     {
-        public string Text { get; set; }
-        public string AnalysisType { get; set; } // sentiment, summary, keywords, translation, grammar
-        public string? TargetLanguage { get; set; } // for translation
+        public string Response { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 
-    public class CodeReviewRequest
+    public class ProductRecommendationResponse
     {
-        public string Code { get; set; }
-        public string? Language { get; set; }
+        public string Recommendation { get; set; }
+        public List<string> Categories { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
+    public class TextAnalysisResponse
+    {
+        public string AnalysisResult { get; set; }
+        public string AnalysisType { get; set; }
+        public double Confidence { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
+    public class CodeReviewResponse
+    {
+        public string ReviewResult { get; set; }
+        public string Language { get; set; }
+        public int CodeLength { get; set; }
+        public DateTime ReviewTimestamp { get; set; }
+    }
+
+    public class ApiStatusResponse
+    {
+        public string Status { get; set; }
+        public string Message { get; set; }
+        public string? Suggestion { get; set; }
+        public string? Error { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 
     public class UsageInfo
@@ -587,4 +644,6 @@ namespace webprogbackend.Controllers
         public int CompletionTokens { get; set; }
         public int TotalTokens { get; set; }
     }
+
+    #endregion
 }
