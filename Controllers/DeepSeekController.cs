@@ -216,6 +216,111 @@ namespace webprogbackend.Controllers
             return Ok(models);
         }
 
+
+        [HttpPost("simple-chat")]
+        public async Task<ActionResult<SimpleChatResponse>> SimpleChat([FromBody] SimpleChatRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.Message))
+                {
+                    return BadRequest(new { error = "Message cannot be empty" });
+                }
+
+                var apiKey = _configuration["DeepSeek:ApiKey"];
+                if (string.IsNullOrWhiteSpace(apiKey))
+                {
+                    return StatusCode(500, new { error = "DeepSeek API key not configured" });
+                }
+
+                // E-ticaret bağlamında yardımcı sistem promptu
+                var systemPrompt = @"You are a helpful e-commerce assistant for an online store. 
+        You help customers find products, provide recommendations, and answer shopping-related questions.
+        Be friendly, helpful, and try to suggest relevant products when appropriate.
+        If someone asks about a specific need (like hair cutting), recommend suitable product categories.
+        Keep responses concise but informative.";
+
+                var deepSeekRequest = new
+                {
+                    model = "deepseek-chat",
+                    messages = new[]
+                    {
+                new
+                {
+                    role = "system",
+                    content = systemPrompt
+                },
+                new
+                {
+                    role = "user",
+                    content = request.Message
+                }
+            },
+                    max_tokens = 500,
+                    temperature = 0.7,
+                    top_p = 0.9,
+                    stream = false
+                };
+
+                var jsonContent = JsonSerializer.Serialize(deepSeekRequest);
+                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+                _httpClient.DefaultRequestHeaders.Clear();
+                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+
+                var response = await _httpClient.PostAsync("https://api.deepseek.com/chat/completions", content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError($"DeepSeek API error: {response.StatusCode} - {errorContent}");
+
+                    return StatusCode(500, new
+                    {
+                        error = "Failed to get response from DeepSeek API",
+                        details = errorContent,
+                        statusCode = response.StatusCode
+                    });
+                }
+
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var apiResponse = JsonSerializer.Deserialize<DeepSeekApiResponse>(responseContent, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
+
+                if (apiResponse?.Choices == null || !apiResponse.Choices.Any())
+                {
+                    return StatusCode(500, new { error = "No response received from DeepSeek API" });
+                }
+
+                var result = new SimpleChatResponse
+                {
+                    Response = apiResponse.Choices[0].Message.Content,
+                    Timestamp = DateTime.UtcNow
+                };
+
+                return Ok(result);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "HTTP request failed while calling DeepSeek API");
+                return StatusCode(500, new { error = "Network error occurred", details = ex.Message });
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "Failed to parse DeepSeek API response");
+                return StatusCode(500, new { error = "Invalid response format from DeepSeek API", details = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error occurred while processing DeepSeek request");
+                return StatusCode(500, new { error = "An unexpected error occurred", details = ex.Message });
+            }
+        }
+
+
+
         // GET: api/DeepSeek/health
         [HttpGet("health")]
         public async Task<ActionResult<object>> CheckHealth()
@@ -275,6 +380,17 @@ namespace webprogbackend.Controllers
         }
     }
 
+
+    public class SimpleChatRequest
+    {
+        public string Message { get; set; }
+    }
+
+    public class SimpleChatResponse
+    {
+        public string Response { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
     // DTO Models
     public class DeepSeekRequest
     {
