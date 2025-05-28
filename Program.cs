@@ -25,6 +25,26 @@ builder.Services.AddControllers()
 // Configure Entity Framework
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// !! DeepSeek Settings'i ÖNCE kaydet !!
+builder.Services.Configure<DeepSeekSettings>(
+    builder.Configuration.GetSection("DeepSeek"));
+
+// HttpClient factory ile DeepSeek client'ýný yapýlandýr
+builder.Services.AddHttpClient("DeepSeek", (serviceProvider, client) =>
+{
+    var deepSeekSettings = serviceProvider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
+
+    client.Timeout = TimeSpan.FromMilliseconds(deepSeekSettings.Timeout);
+    client.DefaultRequestHeaders.Add("User-Agent", "WebProgBackend/1.0");
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+
+    // Debug için log ekle
+    var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+    logger.LogInformation($"DeepSeek HttpClient configured with API key: {deepSeekSettings.ApiKey?.Substring(0, 10)}...");
+});
+
+// Genel HttpClient
 builder.Services.AddHttpClient();
 
 // Configure JWT Settings
@@ -84,9 +104,6 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IStripePaymentService, StripePaymentService>();
 builder.Services.AddScoped<IDatabaseSeeder, DatabaseSeeder>();
 
-// Add HttpClient for external API calls
-builder.Services.AddHttpClient();
-
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -95,7 +112,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Web Programming Backend API",
         Version = "v1",
-        Description = "E-commerce backend API with JWT authentication and role-based authorization",
+        Description = "E-commerce backend API with JWT authentication and DeepSeek AI integration",
         Contact = new OpenApiContact
         {
             Name = "Developer Team",
@@ -143,29 +160,9 @@ builder.Services.AddSwaggerGen(c =>
     c.TagActionsBy(api => new[] { api.GroupName ?? api.ActionDescriptor.RouteValues["controller"] });
     c.DocInclusionPredicate((name, api) => true);
 
-    // Enable XML comments if available
-    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    if (File.Exists(xmlPath))
-    {
-        c.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
-    }
-
     // Custom operation filters for better documentation
     c.OperationFilter<SecurityRequirementsOperationFilter>();
 });
-
-
-builder.Services.Configure<DeepSeekSettings>(
-    builder.Configuration.GetSection("DeepSeek"));
-
-// HttpClient factory ile DeepSeek client'ýný yapýlandýr
-builder.Services.AddHttpClient("DeepSeek", (provider, client) =>
-{
-    var deepSeekSettings = provider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
-    client.Timeout = TimeSpan.FromMilliseconds(deepSeekSettings.Timeout);
-});
-
 
 var app = builder.Build();
 
@@ -188,9 +185,6 @@ app.UseSwaggerUI(c =>
     c.EnableFilter();
     c.ShowExtensions();
     c.EnableValidator();
-
-    // Custom CSS for better appearance
-    c.InjectStylesheet("/swagger-ui/custom.css");
 });
 
 // Global error handling middleware
@@ -254,21 +248,25 @@ using (var scope = app.Services.CreateScope())
     {
         var seeder = scope.ServiceProvider.GetRequiredService<IDatabaseSeeder>();
         await seeder.SeedAsync();
+
+        // DeepSeek ayarlarýný test et
+        var deepSeekSettings = scope.ServiceProvider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation($"DeepSeek configured: Model={deepSeekSettings.DefaultModel}, Key={deepSeekSettings.ApiKey?.Substring(0, 10)}...");
     }
     catch (Exception ex)
     {
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while seeding the database");
+        logger.LogError(ex, "An error occurred during startup");
     }
 }
 
 // API info endpoint
 app.MapGet("/api", () => new
 {
-    message = "Web Programming Backend API",
+    message = "Web Programming Backend API with DeepSeek AI",
     version = "1.0.0",
     swagger = "/swagger",
-    health = "/health",
     endpoints = new
     {
         auth = "/api/Auth",

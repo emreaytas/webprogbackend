@@ -24,6 +24,24 @@ namespace webprogbackend.Controllers
             _httpClient = httpClientFactory.CreateClient("DeepSeek");
             _deepSeekSettings = deepSeekSettings.Value;
             _logger = logger;
+
+            // Constructor'da ayarları logla
+            _logger.LogInformation($"DeepSeekController initialized with model: {_deepSeekSettings.DefaultModel}");
+            _logger.LogInformation($"API Key configured: {(!string.IsNullOrEmpty(_deepSeekSettings.ApiKey))}");
+
+            // API anahtarının doğru yüklendiğini kontrol et
+            if (string.IsNullOrWhiteSpace(_deepSeekSettings.ApiKey))
+            {
+                _logger.LogError("DeepSeek API key is not configured!");
+            }
+            else if (_deepSeekSettings.ApiKey.Length < 20)
+            {
+                _logger.LogError("DeepSeek API key appears to be invalid (too short)");
+            }
+            else
+            {
+                _logger.LogInformation($"DeepSeek API key loaded: {_deepSeekSettings.ApiKey.Substring(0, 10)}...");
+            }
         }
 
         /// <summary>
@@ -310,7 +328,7 @@ namespace webprogbackend.Controllers
         }
 
         /// <summary>
-        /// API durumu kontrolü
+        /// API durumu kontrolü - Yeni API anahtarı ile test
         /// </summary>
         [HttpGet("status")]
         public async Task<ActionResult<ApiStatusResponse>> GetApiStatus()
@@ -339,44 +357,69 @@ namespace webprogbackend.Controllers
                     });
                 }
 
-                // Basit test isteği
+                // DeepSeek V3 için test isteği
                 var testRequest = new
                 {
-                    model = _deepSeekSettings.DefaultModel,
+                    model = "deepseek/deepseek-chat-v3-0324:free",
                     messages = new[]
                     {
-                        new { role = "user", content = "Test" }
+                        new { role = "user", content = "Hello, respond with 'API Working'" }
                     },
-                    max_tokens = 5
+                    max_tokens = 10,
+                    temperature = 0.1
                 };
 
                 try
                 {
-                    await SendDeepSeekRequest(testRequest);
+                    var result = await SendDeepSeekRequest(testRequest);
                     return Ok(new ApiStatusResponse
                     {
                         Status = "healthy",
-                        Message = "API is working correctly",
+                        Message = "DeepSeek V3 API is working correctly",
+                        Suggestion = $"Response: {result.Message}",
                         Timestamp = DateTime.UtcNow
                     });
                 }
-                catch (HttpRequestException ex) when (ex.Message.Contains("401"))
+                catch (HttpRequestException ex) when (ex.Message.Contains("Unauthorized"))
                 {
                     return Ok(new ApiStatusResponse
                     {
                         Status = "error",
                         Message = "Invalid API key",
-                        Suggestion = "Please check your API key at https://openrouter.ai/keys",
+                        Suggestion = "Please verify your OpenRouter API key at https://openrouter.ai/keys",
+                        Error = ex.Message,
                         Timestamp = DateTime.UtcNow
                     });
                 }
-                catch (HttpRequestException ex) when (ex.Message.Contains("402"))
+                catch (HttpRequestException ex) when (ex.Message.Contains("Payment"))
                 {
                     return Ok(new ApiStatusResponse
                     {
                         Status = "error",
                         Message = "Insufficient credits",
-                        Suggestion = "Please add credits at https://openrouter.ai/credits",
+                        Suggestion = "Please add credits to your OpenRouter account at https://openrouter.ai/credits",
+                        Error = ex.Message,
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+                catch (HttpRequestException ex) when (ex.Message.Contains("Rate limit"))
+                {
+                    return Ok(new ApiStatusResponse
+                    {
+                        Status = "warning",
+                        Message = "Rate limit exceeded",
+                        Suggestion = "Please wait before making more requests. Free tier has limits.",
+                        Error = ex.Message,
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Ok(new ApiStatusResponse
+                    {
+                        Status = "error",
+                        Message = "API test failed",
+                        Error = ex.Message,
                         Timestamp = DateTime.UtcNow
                     });
                 }
@@ -389,6 +432,113 @@ namespace webprogbackend.Controllers
                     Status = "error",
                     Message = "Status check failed",
                     Error = ex.Message,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+
+        /// <summary>
+        /// Debug endpoint - Ayarları kontrol etmek için
+        /// </summary>
+        [HttpGet("debug")]
+        public ActionResult<object> Debug()
+        {
+            return Ok(new
+            {
+                Settings = new
+                {
+                    HasApiKey = !string.IsNullOrWhiteSpace(_deepSeekSettings.ApiKey),
+                    ApiKeyLength = _deepSeekSettings.ApiKey?.Length ?? 0,
+                    ApiKeyPrefix = _deepSeekSettings.ApiKey?.Length >= 10 ? _deepSeekSettings.ApiKey.Substring(0, 10) : "Invalid",
+                    BaseUrl = _deepSeekSettings.BaseUrl,
+                    DefaultModel = _deepSeekSettings.DefaultModel,
+                    Timeout = _deepSeekSettings.Timeout,
+                    HttpReferer = _deepSeekSettings.HttpReferer,
+                    XTitle = _deepSeekSettings.XTitle
+                },
+                HttpClientInfo = new
+                {
+                    Timeout = _httpClient.Timeout.TotalMilliseconds,
+                    BaseAddress = _httpClient.BaseAddress?.ToString() ?? "None",
+                    Headers = _httpClient.DefaultRequestHeaders.ToDictionary(h => h.Key, h => string.Join(", ", h.Value))
+                },
+                Environment = new
+                {
+                    MachineName = Environment.MachineName,
+                    AspNetCoreEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+                    Timestamp = DateTime.UtcNow
+                }
+            });
+        }
+
+        /// <summary>
+        /// Manuel API test - Direkt test isteği
+        /// </summary>
+        [HttpPost("manual-test")]
+        public async Task<ActionResult<object>> ManualTest()
+        {
+            try
+            {
+                _logger.LogInformation("Starting manual API test...");
+
+                // Manuel olarak HttpClient oluştur ve test et
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(30);
+
+                var testRequest = new
+                {
+                    model = "deepseek/deepseek-chat-v3-0324:free",
+                    messages = new[]
+                    {
+                        new { role = "user", content = "Say 'Hello World'" }
+                    },
+                    max_tokens = 10
+                };
+
+                var jsonContent = JsonSerializer.Serialize(testRequest, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
+
+                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+                // Headers ekle
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_deepSeekSettings.ApiKey}");
+                client.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
+                client.DefaultRequestHeaders.Add("X-Title", "Manual Test");
+
+                _logger.LogInformation($"Sending request to: {_deepSeekSettings.BaseUrl}");
+                _logger.LogInformation($"Using API key: {_deepSeekSettings.ApiKey?.Substring(0, 10)}...");
+
+                var response = await client.PostAsync(_deepSeekSettings.BaseUrl, content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
+                _logger.LogInformation($"Response status: {response.StatusCode}");
+                _logger.LogInformation($"Response content: {responseContent}");
+
+                return Ok(new
+                {
+                    Success = response.IsSuccessStatusCode,
+                    StatusCode = response.StatusCode.ToString(),
+                    Headers = response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value)),
+                    Content = responseContent,
+                    RequestInfo = new
+                    {
+                        Url = _deepSeekSettings.BaseUrl,
+                        ApiKeyUsed = _deepSeekSettings.ApiKey?.Substring(0, 10) + "...",
+                        Model = "deepseek/deepseek-chat-v3-0324:free"
+                    },
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Manual test failed");
+                return Ok(new
+                {
+                    Success = false,
+                    Error = ex.Message,
+                    StackTrace = ex.StackTrace,
                     Timestamp = DateTime.UtcNow
                 });
             }
@@ -416,13 +566,16 @@ namespace webprogbackend.Controllers
 
         private async Task<DeepSeekResponse> SendDeepSeekRequest(object request)
         {
-            var jsonContent = JsonSerializer.Serialize(request);
+            var jsonContent = JsonSerializer.Serialize(request, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
             var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
 
             _httpClient.DefaultRequestHeaders.Clear();
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_deepSeekSettings.ApiKey}");
-            _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://webprogbackend.com");
-            _httpClient.DefaultRequestHeaders.Add("X-Title", "Web Programming E-Commerce Backend");
+            _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", _deepSeekSettings.HttpReferer);
+            _httpClient.DefaultRequestHeaders.Add("X-Title", _deepSeekSettings.XTitle);
 
             var response = await _httpClient.PostAsync(_deepSeekSettings.BaseUrl, content);
 
@@ -430,7 +583,17 @@ namespace webprogbackend.Controllers
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
                 _logger.LogError($"DeepSeek API error: {response.StatusCode} - {errorContent}");
-                throw new HttpRequestException($"API call failed: {response.StatusCode}");
+
+                var errorMessage = response.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.Unauthorized => "Invalid API key or unauthorized access",
+                    System.Net.HttpStatusCode.PaymentRequired => "Insufficient credits in OpenRouter account",
+                    System.Net.HttpStatusCode.TooManyRequests => "Rate limit exceeded",
+                    System.Net.HttpStatusCode.BadRequest => "Invalid request format",
+                    _ => $"API call failed: {response.StatusCode}"
+                };
+
+                throw new HttpRequestException(errorMessage);
             }
 
             var responseContent = await response.Content.ReadAsStringAsync();
@@ -470,9 +633,7 @@ namespace webprogbackend.Controllers
         {
             return @"Sen bir e-ticaret platformu için müşteri hizmetleri asistanısın. 
             Müşterilere ürün önerileri, alışveriş konularında yardım ve genel sorularını yanıtlıyorsun.
-            Mağazamızda şu kategoriler bulunuyor: Bilgisayar, Telefon, Ses, Tablet, Giyilebilir, Depolama.
-            Dostça, profesyonel ol ve değerli alışveriş yardımı sağlamaya odaklan.
-            Yanıtlarını kısa ve öz tut.";
+            ";
         }
 
         private string GetAnalysisSystemPrompt(string analysisType)
