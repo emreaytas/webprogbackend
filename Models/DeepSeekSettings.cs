@@ -2,7 +2,7 @@
 {
     public class DeepSeekSettings
     {
-        public string ApiKey { get; set; } = "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";
+        public string ApiKey { get; set; } = "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";
         public string BaseUrl { get; set; } = "https://openrouter.ai/api/v1/chat/completions";
         public string DefaultModel { get; set; } = "deepseek/deepseek-chat-v3-0324:free";
         public int Timeout { get; set; } = 60000; // milliseconds
