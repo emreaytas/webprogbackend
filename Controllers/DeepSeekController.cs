@@ -472,73 +472,89 @@ namespace webprogbackend.Controllers
         }
 
         /// <summary>
-        /// Manuel API test - Direkt test isteği
+        /// OpenRouter API key doğrulama ve bilgi endpoint'i
         /// </summary>
-        [HttpPost("manual-test")]
-        public async Task<ActionResult<object>> ManualTest()
+        [HttpGet("validate-key")]
+        public async Task<ActionResult<object>> ValidateApiKey()
         {
             try
             {
-                _logger.LogInformation("Starting manual API test...");
+                var apiKey = _deepSeekSettings.ApiKey;
 
-                // Manuel olarak HttpClient oluştur ve test et
-                using var client = new HttpClient();
-                client.Timeout = TimeSpan.FromSeconds(30);
-
-                var testRequest = new
+                if (string.IsNullOrWhiteSpace(apiKey))
                 {
-                    model = "deepseek/deepseek-chat-v3-0324:free",
-                    messages = new[]
+                    return Ok(new
                     {
-                        new { role = "user", content = "Say 'Hello World'" }
-                    },
-                    max_tokens = 10
-                };
+                        Status = "error",
+                        Message = "API key not configured",
+                        Suggestions = new[]
+                        {
+                            "1. Set DEEPSEEK_API_KEY environment variable",
+                            "2. Or configure in appsettings.json",
+                            "3. Get a new key from https://openrouter.ai/settings/keys"
+                        }
+                    });
+                }
 
-                var jsonContent = JsonSerializer.Serialize(testRequest, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
+                // OpenRouter API ile basit doğrulama
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
 
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                // Headers ekle
-                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_deepSeekSettings.ApiKey}");
-                client.DefaultRequestHeaders.Add("HTTP-Referer", "https://localhost:7130");
-                client.DefaultRequestHeaders.Add("X-Title", "Manual Test");
-
-                _logger.LogInformation($"Sending request to: {_deepSeekSettings.BaseUrl}");
-                _logger.LogInformation($"Using API key: {_deepSeekSettings.ApiKey?.Substring(0, 10)}...");
-
-                var response = await client.PostAsync(_deepSeekSettings.BaseUrl, content);
+                // Models endpoint'ini test et (daha hafif)
+                var response = await client.GetAsync("https://openrouter.ai/api/v1/models");
                 var responseContent = await response.Content.ReadAsStringAsync();
 
-                _logger.LogInformation($"Response status: {response.StatusCode}");
-                _logger.LogInformation($"Response content: {responseContent}");
-
-                return Ok(new
+                if (response.IsSuccessStatusCode)
                 {
-                    Success = response.IsSuccessStatusCode,
-                    StatusCode = response.StatusCode.ToString(),
-                    Headers = response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value)),
-                    Content = responseContent,
-                    RequestInfo = new
+                    return Ok(new
                     {
-                        Url = _deepSeekSettings.BaseUrl,
-                        ApiKeyUsed = _deepSeekSettings.ApiKey?.Substring(0, 10) + "...",
-                        Model = "deepseek/deepseek-chat-v3-0324:free"
-                    },
-                    Timestamp = DateTime.UtcNow
-                });
+                        Status = "success",
+                        Message = "API key is valid and active",
+                        KeyInfo = new
+                        {
+                            Prefix = apiKey.Substring(0, 10) + "...",
+                            Length = apiKey.Length,
+                            Format = apiKey.StartsWith("sk-or-") ? "OpenRouter" : "Unknown"
+                        },
+                        TestResult = "Models endpoint accessible",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    return Ok(new
+                    {
+                        Status = "error",
+                        Message = "API key is invalid or deactivated",
+                        StatusCode = response.StatusCode,
+                        Suggestions = new[]
+                        {
+                            "1. Check if your key is active at https://openrouter.ai/settings/keys",
+                            "2. Generate a new API key",
+                            "3. Make sure the key doesn't have strikethrough (crossed out)"
+                        },
+                        Response = responseContent
+                    });
+                }
+                else
+                {
+                    return Ok(new
+                    {
+                        Status = "error",
+                        Message = $"API request failed: {response.StatusCode}",
+                        Response = responseContent,
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Manual test failed");
+                _logger.LogError(ex, "Error validating API key");
                 return Ok(new
                 {
-                    Success = false,
+                    Status = "error",
+                    Message = "Validation failed",
                     Error = ex.Message,
-                    StackTrace = ex.StackTrace,
                     Timestamp = DateTime.UtcNow
                 });
             }
@@ -633,7 +649,9 @@ namespace webprogbackend.Controllers
         {
             return @"Sen bir e-ticaret platformu için müşteri hizmetleri asistanısın. 
             Müşterilere ürün önerileri, alışveriş konularında yardım ve genel sorularını yanıtlıyorsun.
-            ";
+            Mağazamızda şu kategoriler bulunuyor: Bilgisayar, Telefon, Ses, Tablet, Giyilebilir, Depolama.
+            Dostça, profesyonel ol ve değerli alışveriş yardımı sağlamaya odaklan.
+            Yanıtlarını kısa ve öz tut.";
         }
 
         private string GetAnalysisSystemPrompt(string analysisType)

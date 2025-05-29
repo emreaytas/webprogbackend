@@ -1,141 +1,119 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Text;
-using System.Text.Json.Serialization;
-using webprogbackend.Configurations;
 using webprogbackend.Data;
 using webprogbackend.Models;
 using webprogbackend.Services;
 using webprogbackend.Services.Payment;
+using webprogbackend.Configurations;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
-    });
+// Add services to the container.
+builder.Services.AddControllers();
 
-// Configure Entity Framework
+// Entity Framework
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// !! DeepSeek Settings'i ÖNCE kaydet !!
-builder.Services.Configure<DeepSeekSettings>(
-    builder.Configuration.GetSection("DeepSeek"));
-
-// HttpClient factory ile DeepSeek client'ýný yapýlandýr
-builder.Services.AddHttpClient("DeepSeek", (serviceProvider, client) =>
-{
-    var deepSeekSettings = serviceProvider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
-
-    client.Timeout = TimeSpan.FromMilliseconds(deepSeekSettings.Timeout);
-    client.DefaultRequestHeaders.Add("User-Agent", "WebProgBackend/1.0");
-    client.DefaultRequestHeaders.Add("Accept", "application/json");
-
-    // Debug için log ekle
-    var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
-    logger.LogInformation($"DeepSeek HttpClient configured with API key: {deepSeekSettings.ApiKey?.Substring(0, 10)}...");
-});
-
-// Genel HttpClient
-builder.Services.AddHttpClient();
-
-// Configure JWT Settings
-var jwtSettings = new JwtSettings();
-builder.Configuration.GetSection("JwtSettings").Bind(jwtSettings);
+// JWT Configuration
+var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>();
 builder.Services.AddSingleton(jwtSettings);
 
-// Configure JWT Authentication
+// JWT Authentication
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false; // Set to true in production
-    options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SecretKey)),
         ValidateIssuer = true,
-        ValidIssuer = jwtSettings.Issuer,
         ValidateAudience = true,
-        ValidAudience = jwtSettings.Audience,
         ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings.Issuer,
+        ValidAudience = jwtSettings.Audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SecretKey)),
         ClockSkew = TimeSpan.Zero,
-        RequireExpirationTime = true
+        RequireExpirationTime = true,
+        // Role claim mapping
+        RoleClaimType = "Role",
+        NameClaimType = "Username"
     };
 
     options.Events = new JwtBearerEvents
     {
         OnAuthenticationFailed = context =>
         {
-            if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
-            {
-                context.Response.Headers.Add("Token-Expired", "true");
-            }
+            Console.WriteLine($"Authentication failed: {context.Exception.Message}");
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            Console.WriteLine($"Token validated for: {context.Principal.Identity.Name}");
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            Console.WriteLine($"JWT Challenge: {context.Error}, {context.ErrorDescription}");
             return Task.CompletedTask;
         }
     };
 });
 
-// Configure Authorization
+// Authorization Policies
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
-    options.AddPolicy("ModeratorOrAdmin", policy => policy.RequireRole("Moderator", "Admin"));
-    options.AddPolicy("UserOrAbove", policy => policy.RequireRole("User", "Moderator", "Admin"));
+    options.AddPolicy("UserOnly", policy => policy.RequireRole("User"));
+    options.AddPolicy("AdminOrModerator", policy => policy.RequireRole("Admin", "Moderator"));
+    options.AddPolicy("AllUsers", policy => policy.RequireRole("Admin", "User", "Moderator"));
 });
 
-// Configure CORS
+// CORS Configuration
 builder.Services.ConfigureCors(builder.Configuration);
 
-// Add custom services
+// Services
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IStripePaymentService, StripePaymentService>();
 builder.Services.AddScoped<IDatabaseSeeder, DatabaseSeeder>();
 
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+// DeepSeek Configuration
+builder.Services.Configure<DeepSeekSettings>(builder.Configuration.GetSection("DeepSeek"));
+builder.Services.AddHttpClient("DeepSeek", client =>
+{
+    var deepSeekSettings = builder.Configuration.GetSection("DeepSeek").Get<DeepSeekSettings>();
+    client.BaseAddress = new Uri(deepSeekSettings.BaseUrl);
+    client.Timeout = TimeSpan.FromMilliseconds(deepSeekSettings.Timeout);
+    client.DefaultRequestHeaders.Add("HTTP-Referer", deepSeekSettings.HttpReferer);
+    client.DefaultRequestHeaders.Add("X-Title", deepSeekSettings.XTitle);
+});
+
+// Swagger Configuration
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "Web Programming Backend API",
+        Title = "Web Programming E-Commerce API",
         Version = "v1",
-        Description = "E-commerce backend API with JWT authentication and DeepSeek AI integration",
-        Contact = new OpenApiContact
-        {
-            Name = "Developer Team",
-            Email = "developer@example.com"
-        },
-        License = new OpenApiLicense
-        {
-            Name = "MIT License",
-            Url = new Uri("https://opensource.org/licenses/MIT")
-        }
+        Description = "E-Commerce Backend API with Role-Based Authentication"
     });
 
-    // Add JWT Authentication support to Swagger
+    // JWT Authentication için Swagger konfigürasyonu
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = @"JWT Authorization header using the Bearer scheme. 
-                      Enter 'Bearer' [space] and then your token in the text input below.
-                      Example: 'Bearer 12345abcdef'",
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT"
+        Scheme = "Bearer"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -147,171 +125,64 @@ builder.Services.AddSwaggerGen(c =>
                 {
                     Type = ReferenceType.SecurityScheme,
                     Id = "Bearer"
-                },
-                Scheme = "oauth2",
-                Name = "Bearer",
-                In = ParameterLocation.Header,
+                }
             },
-            new List<string>()
+            Array.Empty<string>()
         }
     });
+});
 
-    // Group endpoints by tags
-    c.TagActionsBy(api => new[] { api.GroupName ?? api.ActionDescriptor.RouteValues["controller"] });
-    c.DocInclusionPredicate((name, api) => true);
-
-    // Custom operation filters for better documentation
-    c.OperationFilter<SecurityRequirementsOperationFilter>();
+// Logging
+builder.Services.AddLogging(builder =>
+{
+    builder.AddConsole();
+    builder.AddDebug();
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
-app.UseSwagger(c =>
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
 {
-    c.RouteTemplate = "swagger/{documentName}/swagger.json";
-});
-
-app.UseSwaggerUI(c =>
-{
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Web Programming Backend API V1");
-    c.RoutePrefix = "swagger";
-    c.DocumentTitle = "Web Programming Backend API";
-    c.DefaultModelsExpandDepth(-1); // Hide schemas section by default
-    c.DefaultModelExpandDepth(2);
-    c.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None);
-    c.DisplayRequestDuration();
-    c.EnableDeepLinking();
-    c.EnableFilter();
-    c.ShowExtensions();
-    c.EnableValidator();
-});
-
-// Global error handling middleware
-app.UseExceptionHandler(errorApp =>
-{
-    errorApp.Run(async context =>
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        context.Response.StatusCode = 500;
-        context.Response.ContentType = "application/json";
-
-        var errorFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
-        if (errorFeature != null)
-        {
-            var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-            logger.LogError(errorFeature.Error, "An unhandled exception occurred");
-
-            await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
-            {
-                error = "An error occurred processing your request.",
-                message = app.Environment.IsDevelopment() ? errorFeature.Error.Message : "Internal server error"
-            }));
-        }
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Web Programming E-Commerce API V1");
+        c.RoutePrefix = string.Empty; // Swagger UI'yi root'ta çalýþtýr
     });
-});
+}
 
 app.UseHttpsRedirection();
 
-// Configure CORS
+// CORS - Authentication'dan önce olmalý
 app.UseCors("DefaultPolicy");
-
-// Configure security headers
-app.Use(async (context, next) =>
-{
-    context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
-    context.Response.Headers.Add("X-Frame-Options", "DENY");
-    context.Response.Headers.Add("X-XSS-Protection", "1; mode=block");
-    context.Response.Headers.Add("Referrer-Policy", "strict-origin-when-cross-origin");
-
-    if (context.Request.IsHttps)
-    {
-        context.Response.Headers.Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-    }
-
-    await next();
-});
 
 // Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Map controllers
 app.MapControllers();
-
-// Swagger redirect from root
-app.MapGet("/", () => Results.Redirect("/swagger"));
 
 // Database seeding
 using (var scope = app.Services.CreateScope())
 {
     try
     {
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var seeder = scope.ServiceProvider.GetRequiredService<IDatabaseSeeder>();
+
+        // Ensure database is created
+        await context.Database.EnsureCreatedAsync();
+
+        // Run seeder
         await seeder.SeedAsync();
 
-        // DeepSeek ayarlarýný test et
-        var deepSeekSettings = scope.ServiceProvider.GetRequiredService<IOptions<DeepSeekSettings>>().Value;
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogInformation($"DeepSeek configured: Model={deepSeekSettings.DefaultModel}, Key={deepSeekSettings.ApiKey?.Substring(0, 10)}...");
+        Console.WriteLine("Database seeding completed successfully.");
     }
     catch (Exception ex)
     {
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred during startup");
+        Console.WriteLine($"Database seeding failed: {ex.Message}");
     }
 }
-
-// API info endpoint
-app.MapGet("/api", () => new
-{
-    message = "Web Programming Backend API with DeepSeek AI",
-    version = "1.0.0",
-    swagger = "/swagger",
-    endpoints = new
-    {
-        auth = "/api/Auth",
-        products = "/api/Products",
-        cart = "/api/Cart",
-        orders = "/api/Orders",
-        users = "/api/Users",
-        dashboard = "/api/Dashboard",
-        categories = "/api/Categories",
-        payment = "/api/Payment",
-        deepseek = "/api/DeepSeek"
-    }
-}).WithTags("Info");
 
 app.Run();
-
-// Custom operation filter for Swagger security requirements
-public class SecurityRequirementsOperationFilter : IOperationFilter
-{
-    public void Apply(OpenApiOperation operation, OperationFilterContext context)
-    {
-        var hasAuthorize = context.MethodInfo.DeclaringType.GetCustomAttributes(true)
-            .Union(context.MethodInfo.GetCustomAttributes(true))
-            .OfType<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
-            .Any();
-
-        if (hasAuthorize)
-        {
-            operation.Responses.Add("401", new OpenApiResponse { Description = "Unauthorized" });
-            operation.Responses.Add("403", new OpenApiResponse { Description = "Forbidden" });
-
-            operation.Security = new List<OpenApiSecurityRequirement>
-            {
-                new OpenApiSecurityRequirement
-                {
-                    [new OpenApiSecurityScheme
-                    {
-                        Reference = new OpenApiReference
-                        {
-                            Type = ReferenceType.SecurityScheme,
-                            Id = "Bearer"
-                        }
-                    }] = new[] { "Bearer" }
-                }
-            };
-        }
-    }
-}
