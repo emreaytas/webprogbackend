@@ -36,6 +36,9 @@ namespace webprogbackend.Services
                 // Seed admin user
                 await SeedAdminUserAsync();
 
+                // Seed test users with different roles
+                await SeedTestUsersAsync();
+
                 // Seed sample products if none exist
                 await SeedSampleProductsAsync();
 
@@ -86,6 +89,54 @@ namespace webprogbackend.Services
             _logger.LogInformation($"Admin user created successfully with email: {adminEmail}");
         }
 
+        private async Task SeedTestUsersAsync()
+        {
+            // Test kullanıcıları oluştur (sadece development ortamında)
+            if (!_configuration.GetValue<bool>("SeedTestData", false))
+            {
+                return;
+            }
+
+            var testUsers = new[]
+            {
+                new { Username = "testuser", Email = "user@test.com", Password = "Test123!", Role = UserRole.User },
+                new { Username = "testmoderator", Email = "moderator@test.com", Password = "Test123!", Role = UserRole.Moderator },
+                new { Username = "testadmin2", Email = "admin2@test.com", Password = "Test123!", Role = UserRole.Admin }
+            };
+
+            foreach (var testUser in testUsers)
+            {
+                if (!await _context.Users.AnyAsync(u => u.Email == testUser.Email))
+                {
+                    var user = new User
+                    {
+                        Username = testUser.Username,
+                        Email = testUser.Email,
+                        Password = BCrypt.Net.BCrypt.HashPassword(testUser.Password),
+                        Role = testUser.Role,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    _context.Users.Add(user);
+
+                    // Normal kullanıcılar için cart oluştur
+                    if (testUser.Role == UserRole.User)
+                    {
+                        var cart = new Cart
+                        {
+                            UserId = user.Id,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.Carts.Add(cart);
+                    }
+
+                    _logger.LogInformation($"Test user created: {testUser.Email} with role: {testUser.Role}");
+                }
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
         private async Task SeedSampleProductsAsync()
         {
             if (await _context.Products.AnyAsync())
@@ -98,102 +149,152 @@ namespace webprogbackend.Services
             {
                 new Product
                 {
-                    Name = "Laptop Bilgisayar",
-                    Description = "Yüksek performanslı dizüstü bilgisayar. Intel i7 işlemci, 16GB RAM, 512GB SSD.",
-                    Price = 15999.99m,
-                    StockQuantity = 25,
+                    Name = "MacBook Pro 14",
+                    Description = "Apple MacBook Pro 14 inç, M3 Pro çip, 18GB RAM, 512GB SSD. Profesyonel iş yükü için mükemmel performans.",
+                    Price = 45999.99m,
+                    StockQuantity = 15,
                     Category = "Bilgisayar",
-                    ImageUrl = "https://via.placeholder.com/300x300/0066CC/FFFFFF?text=Laptop",
+                    ImageUrl = "https://via.placeholder.com/300x300/1f1f1f/FFFFFF?text=MacBook+Pro",
                     CreatedAt = DateTime.UtcNow
                 },
                 new Product
                 {
-                    Name = "Akıllı Telefon",
-                    Description = "Son nesil akıllı telefon. 128GB depolama, 48MP kamera, 5G destekli.",
-                    Price = 8999.99m,
-                    StockQuantity = 50,
-                    Category = "Telefon",
-                    ImageUrl = "https://via.placeholder.com/300x300/009900/FFFFFF?text=Phone",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Bluetooth Kulaklık",
-                    Description = "Kablosuz Bluetooth kulaklık. Aktif gürültü engelleme, 30 saat pil ömrü.",
-                    Price = 599.99m,
-                    StockQuantity = 100,
-                    Category = "Ses",
-                    ImageUrl = "https://via.placeholder.com/300x300/CC6600/FFFFFF?text=Headphones",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Gaming Mouse",
-                    Description = "Profesyonel oyuncu faresi. RGB aydınlatma, 16000 DPI, programlanabilir tuşlar.",
-                    Price = 299.99m,
-                    StockQuantity = 75,
+                    Name = "Dell XPS 13 Plus",
+                    Description = "Intel Core i7-1360P, 32GB RAM, 1TB SSD, 13.4 inç OLED dokunmatik ekran.",
+                    Price = 35999.99m,
+                    StockQuantity = 22,
                     Category = "Bilgisayar",
-                    ImageUrl = "https://via.placeholder.com/300x300/CC0066/FFFFFF?text=Mouse",
+                    ImageUrl = "https://via.placeholder.com/300x300/0066CC/FFFFFF?text=Dell+XPS",
                     CreatedAt = DateTime.UtcNow
                 },
                 new Product
                 {
-                    Name = "4K Monitör",
-                    Description = "27 inç 4K UHD monitör. IPS panel, HDR10 desteği, USB-C bağlantısı.",
-                    Price = 3299.99m,
-                    StockQuantity = 20,
-                    Category = "Bilgisayar",
-                    ImageUrl = "https://via.placeholder.com/300x300/6600CC/FFFFFF?text=Monitor",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Mekanik Klavye",
-                    Description = "RGB aydınlatmalı mekanik klavye. Cherry MX anahtarlar, programlanabilir makrolar.",
-                    Price = 899.99m,
-                    StockQuantity = 60,
-                    Category = "Bilgisayar",
-                    ImageUrl = "https://via.placeholder.com/300x300/009999/FFFFFF?text=Keyboard",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Tablet",
-                    Description = "10.9 inç tablet. 256GB depolama, Apple Pencil desteği, 10 saat pil ömrü.",
-                    Price = 4999.99m,
-                    StockQuantity = 30,
-                    Category = "Tablet",
-                    ImageUrl = "https://via.placeholder.com/300x300/CC3300/FFFFFF?text=Tablet",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Akıllı Saat",
-                    Description = "Spor ve sağlık takibi özellikli akıllı saat. GPS, kalp ritmi monitörü, su geçirmez.",
-                    Price = 1999.99m,
-                    StockQuantity = 40,
-                    Category = "Giyilebilir",
-                    ImageUrl = "https://via.placeholder.com/300x300/996600/FFFFFF?text=Watch",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Taşınabilir SSD",
-                    Description = "1TB taşınabilir SSD. USB 3.2 Gen 2, şifreleme desteği, dayanıklı yapı.",
-                    Price = 1299.99m,
-                    StockQuantity = 80,
-                    Category = "Depolama",
-                    ImageUrl = "https://via.placeholder.com/300x300/666600/FFFFFF?text=SSD",
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Product
-                {
-                    Name = "Webcam",
-                    Description = "4K webcam. Otomatik odaklama, stereo mikrofon, geniş görüş açısı.",
-                    Price = 799.99m,
+                    Name = "iPhone 15 Pro Max",
+                    Description = "Apple iPhone 15 Pro Max, 256GB, Titanium Blue. A17 Pro çip, Pro kamera sistemi.",
+                    Price = 52999.99m,
                     StockQuantity = 35,
+                    Category = "Telefon",
+                    ImageUrl = "https://via.placeholder.com/300x300/1f1f1f/FFFFFF?text=iPhone+15",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Samsung Galaxy S24 Ultra",
+                    Description = "Samsung Galaxy S24 Ultra, 512GB, Titanium Black. Snapdragon 8 Gen 3, S Pen dahil.",
+                    Price = 48999.99m,
+                    StockQuantity = 28,
+                    Category = "Telefon",
+                    ImageUrl = "https://via.placeholder.com/300x300/1428A0/FFFFFF?text=Galaxy+S24",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Sony WH-1000XM5",
+                    Description = "Sony WH-1000XM5 Kablosuz Noise Cancelling Kulaklık. 30 saat pil ömrü, premium ses kalitesi.",
+                    Price = 12999.99m,
+                    StockQuantity = 45,
                     Category = "Ses",
-                    ImageUrl = "https://via.placeholder.com/300x300/336699/FFFFFF?text=Webcam",
+                    ImageUrl = "https://via.placeholder.com/300x300/000000/FFFFFF?text=Sony+WH1000XM5",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "AirPods Pro 2. Nesil",
+                    Description = "Apple AirPods Pro (2. nesil) MagSafe şarj kutusu ile. Adaptif Transparency, Kişiselleştirilmiş Spatial Audio.",
+                    Price = 8999.99m,
+                    StockQuantity = 67,
+                    Category = "Ses",
+                    ImageUrl = "https://via.placeholder.com/300x300/FFFFFF/000000?text=AirPods+Pro",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "iPad Pro 12.9 M2",
+                    Description = "Apple iPad Pro 12.9 inç, M2 çip, 256GB WiFi + Cellular. Liquid Retina XDR ekran.",
+                    Price = 38999.99m,
+                    StockQuantity = 18,
+                    Category = "Tablet",
+                    ImageUrl = "https://via.placeholder.com/300x300/E5E5E7/000000?text=iPad+Pro",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Samsung Galaxy Tab S9 Ultra",
+                    Description = "Samsung Galaxy Tab S9 Ultra, 512GB, 14.6 inç Dynamic AMOLED 2X ekran, S Pen dahil.",
+                    Price = 34999.99m,
+                    StockQuantity = 12,
+                    Category = "Tablet",
+                    ImageUrl = "https://via.placeholder.com/300x300/1428A0/FFFFFF?text=Tab+S9+Ultra",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Apple Watch Series 9",
+                    Description = "Apple Watch Series 9 GPS + Cellular, 45mm, Midnight Aluminum Case. watchOS 10, Siri sorguları.",
+                    Price = 16999.99m,
+                    StockQuantity = 33,
+                    Category = "Giyilebilir",
+                    ImageUrl = "https://via.placeholder.com/300x300/000000/FFFFFF?text=Apple+Watch",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Samsung Galaxy Watch6 Classic",
+                    Description = "Samsung Galaxy Watch6 Classic, 47mm, Stainless Steel. Gelişmiş sağlık takibi, döner çerçeve.",
+                    Price = 12999.99m,
+                    StockQuantity = 26,
+                    Category = "Giyilebilir",
+                    ImageUrl = "https://via.placeholder.com/300x300/1428A0/FFFFFF?text=Galaxy+Watch6",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Samsung T7 Portable SSD 2TB",
+                    Description = "Samsung T7 Portable SSD 2TB. USB 3.2 Gen 2, 1050MB/s okuma hızı, AES 256-bit şifreleme.",
+                    Price = 4999.99m,
+                    StockQuantity = 55,
+                    Category = "Depolama",
+                    ImageUrl = "https://via.placeholder.com/300x300/1428A0/FFFFFF?text=T7+SSD",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "SanDisk Extreme Pro Portable SSD 4TB",
+                    Description = "SanDisk Extreme Pro Portable SSD 4TB. USB-C 3.2 Gen 2x2, 2000MB/s aktarım hızı.",
+                    Price = 12999.99m,
+                    StockQuantity = 31,
+                    Category = "Depolama",
+                    ImageUrl = "https://via.placeholder.com/300x300/FF6600/FFFFFF?text=SanDisk+Extreme",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Logitech MX Master 3S",
+                    Description = "Logitech MX Master 3S Wireless Mouse. Sessiz tıklama, MagSpeed elektromanyetik kaydırma.",
+                    Price = 3299.99m,
+                    StockQuantity = 78,
+                    Category = "Bilgisayar",
+                    ImageUrl = "https://via.placeholder.com/300x300/017EFA/FFFFFF?text=MX+Master+3S",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "Keychron K8 Pro Mechanical Keyboard",
+                    Description = "Keychron K8 Pro Kablosuz Mekanik Klavye. Gateron Pro anahtarlar, RGB backlighting.",
+                    Price = 4599.99m,
+                    StockQuantity = 42,
+                    Category = "Bilgisayar",
+                    ImageUrl = "https://via.placeholder.com/300x300/2D2D2D/FFFFFF?text=Keychron+K8",
+                    CreatedAt = DateTime.UtcNow
+                },
+                new Product
+                {
+                    Name = "LG UltraGear 27GP950-B",
+                    Description = "LG UltraGear 27 inç 4K UHD Nano IPS Gaming Monitör. 144Hz, HDR600, USB-C 90W.",
+                    Price = 23999.99m,
+                    StockQuantity = 14,
+                    Category = "Bilgisayar",
+                    ImageUrl = "https://via.placeholder.com/300x300/A40000/FFFFFF?text=LG+UltraGear",
                     CreatedAt = DateTime.UtcNow
                 }
             };
@@ -201,7 +302,7 @@ namespace webprogbackend.Services
             _context.Products.AddRange(sampleProducts);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation($"Created {sampleProducts.Count} sample products");
+            _logger.LogInformation($"Created {sampleProducts.Count} sample products with various categories and price ranges");
         }
     }
 }
