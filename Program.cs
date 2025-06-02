@@ -84,6 +84,8 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IStripePaymentService, StripePaymentService>();
 builder.Services.AddScoped<IDatabaseSeeder, DatabaseSeeder>();
 
+builder.Services.AddScoped<IEmailService, EmailService>();
+
 // DeepSeek Configuration
 builder.Services.Configure<DeepSeekSettings>(builder.Configuration.GetSection("DeepSeek"));
 builder.Services.AddHttpClient("DeepSeek", client =>
