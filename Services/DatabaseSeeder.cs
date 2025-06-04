@@ -1,4 +1,6 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿// Services/DatabaseSeeder.cs - Düzeltilmiş versiyon
+
+using Microsoft.EntityFrameworkCore;
 using webprogbackend.Data;
 using webprogbackend.Models;
 using webprogbackend.Models.Enums;
@@ -47,7 +49,8 @@ namespace webprogbackend.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An error occurred while seeding the database");
-                throw;
+                // Hatayı yeniden fırlatma, sadece logla
+                // throw;
             }
         }
 
@@ -105,6 +108,7 @@ namespace webprogbackend.Services
 
             foreach (var testUser in testUsers)
             {
+                // Kullanıcı zaten var mı kontrol et
                 if (!await _context.Users.AnyAsync(u => u.Email == testUser.Email))
                 {
                     var user = new User
@@ -118,22 +122,24 @@ namespace webprogbackend.Services
 
                     _context.Users.Add(user);
 
-                    // Normal kullanıcılar için cart oluştur
+                    // Önce kullanıcıyı kaydet
+                    await _context.SaveChangesAsync();
+
+                    // Şimdi cart oluştur (normal kullanıcılar için)
                     if (testUser.Role == UserRole.User)
                     {
                         var cart = new Cart
                         {
-                            UserId = user.Id,
+                            UserId = user.Id, // Artık user.Id var
                             CreatedAt = DateTime.UtcNow
                         };
                         _context.Carts.Add(cart);
+                        await _context.SaveChangesAsync();
                     }
 
                     _logger.LogInformation($"Test user created: {testUser.Email} with role: {testUser.Role}");
                 }
             }
-
-            await _context.SaveChangesAsync();
         }
 
         private async Task SeedSampleProductsAsync()

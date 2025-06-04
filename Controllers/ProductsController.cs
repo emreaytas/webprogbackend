@@ -23,7 +23,88 @@ namespace webprogbackend.Controllers
 
 
         [HttpPost("Add")]
+        [Consumes("multipart/form-data")]
         public async Task<ActionResult<Product>> AddProduct([FromForm] ProductCreateDto dto)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    var errors = ModelState
+                        .Where(x => x.Value.Errors.Count > 0)
+                        .Select(x => new { Field = x.Key, Errors = x.Value.Errors.Select(e => e.ErrorMessage) })
+                        .ToList();
+
+                    return BadRequest(new { message = "Validation errors", errors });
+                }
+
+                var product = new Product
+                {
+                    Name = dto.Name,
+                    Description = dto.Description,
+                    Price = dto.Price,
+                    StockQuantity = dto.StockQuantity,
+                    Category = dto.Category,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                // Resim yükleme iþlemi
+                if (dto.Image != null && dto.Image.Length > 0)
+                {
+                    // Dosya boyutu kontrolü (5MB limit)
+                    if (dto.Image.Length > 5 * 1024 * 1024)
+                    {
+                        return BadRequest(new { message = "Dosya boyutu 5MB'dan büyük olamaz." });
+                    }
+
+                    // Dosya türü kontrolü
+                    var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" };
+                    if (!allowedTypes.Contains(dto.Image.ContentType?.ToLower()))
+                    {
+                        return BadRequest(new { message = "Sadece JPEG, PNG, GIF ve WebP dosyalarý kabul edilir." });
+                    }
+
+                    try
+                    {
+                        using var ms = new MemoryStream();
+                        await dto.Image.CopyToAsync(ms);
+                        product.ImageData = ms.ToArray();
+
+                        // Log dosya bilgilerini
+                        Console.WriteLine($"Image uploaded: {dto.Image.FileName}, Size: {dto.Image.Length} bytes, Type: {dto.Image.ContentType}");
+                    }
+                    catch (Exception ex)
+                    {
+                        return BadRequest(new { message = "Resim yüklenirken hata oluþtu", error = ex.Message });
+                    }
+                }
+
+                _context.Products.Add(product);
+                await _context.SaveChangesAsync();
+
+                return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, new
+                {
+                    product.Id,
+                    product.Name,
+                    product.Description,
+                    product.Price,
+                    product.StockQuantity,
+                    product.Category,
+                    product.CreatedAt,
+                    HasImage = product.ImageData != null && product.ImageData.Length > 0,
+                    ImageSize = product.ImageData?.Length ?? 0
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in AddProduct: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "Sunucu hatasý oluþtu", error = ex.Message });
+            }
+        }
+
+        [HttpPost("Add2")]
+        public async Task<ActionResult<Product>> AddProduct2([FromForm] ProductCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
@@ -48,6 +129,78 @@ namespace webprogbackend.Controllers
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
         }
+
+
+        [HttpPost("AddSimple")]
+        public async Task<ActionResult<Product>> AddSimpleProduct([FromBody] SimpleProductDto dto)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var product = new Product
+                {
+                    Name = dto.Name,
+                    Description = dto.Description,
+                    Price = dto.Price,
+                    StockQuantity = dto.StockQuantity,
+                    Category = dto.Category,
+                    ImageUrl = dto.ImageUrl, // URL olarak
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _context.Products.Add(product);
+                await _context.SaveChangesAsync();
+
+                return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Sunucu hatasý: {ex.Message}" });
+            }
+        }
+
+        // Ayrý endpoint ile resim yükleme - Swagger'dan ayrý test edin
+        [HttpPost("{id}/upload-image")]
+        [AuthorizeRoles(UserRole.Admin)]
+        public async Task<ActionResult> UploadProductImage(int id, IFormFile image)
+        {
+            try
+            {
+                var product = await _context.Products.FindAsync(id);
+                if (product == null)
+                    return NotFound();
+
+                if (image == null || image.Length == 0)
+                    return BadRequest("Resim dosyasý gereklidir");
+
+                // Dosya boyutu kontrolü (5MB limit)
+                if (image.Length > 5 * 1024 * 1024)
+                    return BadRequest("Dosya boyutu 5MB'dan büyük olamaz");
+
+                // Dosya türü kontrolü
+                var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif" };
+                if (!allowedTypes.Contains(image.ContentType))
+                    return BadRequest("Sadece JPEG, PNG ve GIF dosyalarý kabul edilir");
+
+                using var ms = new MemoryStream();
+                await image.CopyToAsync(ms);
+                product.ImageData = ms.ToArray();
+                product.UpdatedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "Resim baþarýyla yüklendi", imageSize = image.Length });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Sunucu hatasý: {ex.Message}" });
+            }
+        }
+
 
 
         [HttpGet("TopStock")]
@@ -434,13 +587,54 @@ namespace webprogbackend.Controllers
     public class ProductCreateDto
     {
         [Required] public string Name { get; set; }
+
         public string Description { get; set; }
+
         [Range(0, 999999)] public decimal Price { get; set; }
         [Range(0, int.MaxValue)] public int StockQuantity { get; set; }
         public string Category { get; set; }
 
         // <input type="file" name="Image">
         public IFormFile Image { get; set; }       // Optional
+    }
+
+
+    public class ProductCreateDto2
+    {
+        [Required] public string Name { get; set; }
+
+        public string Description { get; set; }
+
+        [Range(0, 999999)] public decimal Price { get; set; }
+        [Range(0, int.MaxValue)] public int StockQuantity { get; set; }
+        public string Category { get; set; }
+
+        public string? imageUrl { get; set; } // Optional URL for image
+    }
+
+    public class SimpleProductDto
+    {
+        [Required]
+        [StringLength(100)]
+        public string Name { get; set; }
+
+        [StringLength(1000)]
+        public string Description { get; set; } = string.Empty;
+
+        [Required]
+        [Range(0.01, 999999.99)]
+        public decimal Price { get; set; }
+
+        [Required]
+        [Range(0, int.MaxValue)]
+        public int StockQuantity { get; set; }
+
+        [Required]
+        [StringLength(50)]
+        public string Category { get; set; }
+
+        // URL olarak resim
+        public string? ImageUrl { get; set; }
     }
 
 }
