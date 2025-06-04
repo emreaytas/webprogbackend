@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using webprogbackend.Attributes;
 using webprogbackend.Data;
@@ -18,6 +19,94 @@ namespace webprogbackend.Controllers
         public ProductsController(ApplicationDbContext context)
         {
             _context = context;
+        }
+
+
+        [HttpPost("Add")]
+        public async Task<ActionResult<Product>> AddProduct([FromForm] ProductCreateDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var product = new Product
+            {
+                Name = dto.Name,
+                Description = dto.Description,
+                Price = dto.Price,
+                StockQuantity = dto.StockQuantity,
+                Category = dto.Category,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            if (dto.Image is { Length: > 0 })
+            {
+                using var ms = new MemoryStream();
+                await dto.Image.CopyToAsync(ms);
+                product.ImageData = ms.ToArray();
+            }
+
+            _context.Products.Add(product);
+            await _context.SaveChangesAsync();
+            return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
+        }
+
+
+        [HttpGet("TopStock")]
+        public async Task<ActionResult<IEnumerable<object>>> GetTopStockProducts([FromQuery] int count = 3)
+        {
+            var products = await _context.Products
+                .OrderByDescending(p => p.StockQuantity)
+                .ThenBy(p => p.Name)
+                .Take(count)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.StockQuantity,
+                    p.Price,
+                    p.Category
+                })
+                .ToListAsync();
+
+            return products;
+        }
+
+        [HttpGet("TopSelling")]
+        public async Task<ActionResult<IEnumerable<object>>> GetTopSellingProducts([FromQuery] int count = 3)
+        {
+            var topSelling = await _context.OrderItems
+                .GroupBy(oi => oi.ProductId)
+                .Select(g => new
+                {
+                    ProductId = g.Key,
+                    TotalSold = g.Sum(oi => oi.Quantity),
+                    Revenue = g.Sum(oi => oi.Quantity * oi.UnitPrice)
+                })
+                .OrderByDescending(x => x.TotalSold)
+                .Take(count)
+                .Join(_context.Products,
+                      ts => ts.ProductId,
+                      p => p.Id,
+                      (ts, p) => new
+                      {
+                          p.Id,
+                          p.Name,
+                          p.Category,
+                          ts.TotalSold,
+                          ts.Revenue,
+                          p.StockQuantity
+                      })
+                .ToListAsync();
+
+            return topSelling;
+        }
+
+        [HttpGet("All")]
+        public async Task<ActionResult<IEnumerable<Product>>> GetAllProducts()
+        {
+            var products = await _context.Products
+                .OrderBy(p => p.Name)
+                .ToListAsync();
+            return products;
         }
 
         // GET: api/Products
@@ -341,4 +430,17 @@ namespace webprogbackend.Controllers
     {
         public int Quantity { get; set; }
     }
+
+    public class ProductCreateDto
+    {
+        [Required] public string Name { get; set; }
+        public string Description { get; set; }
+        [Range(0, 999999)] public decimal Price { get; set; }
+        [Range(0, int.MaxValue)] public int StockQuantity { get; set; }
+        public string Category { get; set; }
+
+        // <input type="file" name="Image">
+        public IFormFile Image { get; set; }       // Optional
+    }
+
 }

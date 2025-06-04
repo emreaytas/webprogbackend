@@ -158,7 +158,6 @@ namespace webprogbackend.Controllers
         /// Admin Kullanýcý Kayýt (Sadece Admin)
         /// </summary>
         [HttpPost("admin/register")]
-        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<AuthResponse>> AdminRegister([FromBody] AdminRegisterRequest request)
         {
             try
