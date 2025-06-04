@@ -12,8 +12,8 @@ using webprogbackend.Data;
 namespace webprogbackend.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250529155411_Rabia")]
-    partial class Rabia
+    [Migration("20250604123358_dfbdsfbdsasdsdvs")]
+    partial class dfbdsfbdsasdsdvs
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -44,8 +44,7 @@ namespace webprogbackend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId")
-                        .IsUnique();
+                    b.HasIndex("UserId");
 
                     b.ToTable("Carts");
                 });
@@ -232,9 +231,6 @@ namespace webprogbackend.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -254,8 +250,8 @@ namespace webprogbackend.Migrations
             modelBuilder.Entity("webprogbackend.Models.Cart", b =>
                 {
                     b.HasOne("webprogbackend.Models.User", "User")
-                        .WithOne("Cart")
-                        .HasForeignKey("webprogbackend.Models.Cart", "UserId")
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -330,9 +326,6 @@ namespace webprogbackend.Migrations
 
             modelBuilder.Entity("webprogbackend.Models.User", b =>
                 {
-                    b.Navigation("Cart")
-                        .IsRequired();
-
                     b.Navigation("Orders");
                 });
 #pragma warning restore 612, 618

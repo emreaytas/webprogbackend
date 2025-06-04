@@ -100,7 +100,6 @@ namespace webprogbackend.Services
             var testUsers = new[]
             {
                 new { Username = "testuser", Email = "user@test.com", Password = "Test123!", Role = UserRole.User },
-                new { Username = "testmoderator", Email = "moderator@test.com", Password = "Test123!", Role = UserRole.Moderator },
                 new { Username = "testadmin2", Email = "admin2@test.com", Password = "Test123!", Role = UserRole.Admin }
             };
 

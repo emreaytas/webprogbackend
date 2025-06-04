@@ -30,7 +30,6 @@ namespace webprogbackend.Middleware
                         // Kullanıcının rolünü context'e ekle
                         context.Items["UserRole"] = userRole;
                         context.Items["IsAdmin"] = userRole == UserRole.Admin;
-                        context.Items["IsModerator"] = userRole == UserRole.Moderator;
                         context.Items["IsUser"] = userRole == UserRole.User;
 
                         _logger.LogDebug($"User role set: {userRole} for user: {context.User.Identity.Name}");

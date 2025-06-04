@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
-using System.Security.Claims;
 using webprogbackend.Data;
 using webprogbackend.Models;
 using webprogbackend.Models.Enums;
@@ -16,23 +15,26 @@ namespace webprogbackend.Controllers
     {
         private readonly ApplicationDbContext _context;
         private readonly IJwtService _jwtService;
+        private readonly IEmailService _emailService;
         private readonly ILogger<AuthController> _logger;
 
         public AuthController(
             ApplicationDbContext context,
             IJwtService jwtService,
+            IEmailService emailService,
             ILogger<AuthController> logger)
         {
             _context = context;
             _jwtService = jwtService;
+            _emailService = emailService;
             _logger = logger;
         }
 
         /// <summary>
-        /// Kullanýcý kaydý - Varsayýlan olarak User rolü atanýr
+        /// Kullanýcý Kayýt
         /// </summary>
-        [HttpPost("Register")]
-        public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterModel model)
+        [HttpPost("register")]
+        public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request)
         {
             try
             {
@@ -41,43 +43,45 @@ namespace webprogbackend.Controllers
                     return BadRequest(ModelState);
                 }
 
-                // Check if user already exists
-                if (await _context.Users.AnyAsync(u => u.Email == model.Email))
+                // E-posta kontrolü
+                if (await _context.Users.AnyAsync(u => u.Email == request.Email))
                 {
-                    return BadRequest(new { message = "Email already registered" });
+                    return BadRequest(new { message = "Bu e-posta adresi zaten kullanýlýyor" });
                 }
 
-                if (await _context.Users.AnyAsync(u => u.Username == model.Username))
+                // Kullanýcý adý kontrolü
+                if (await _context.Users.AnyAsync(u => u.Username == request.Username))
                 {
-                    return BadRequest(new { message = "Username already taken" });
+                    return BadRequest(new { message = "Bu kullanýcý adý zaten kullanýlýyor" });
                 }
 
-                // Create new user with User role by default
+                // Yeni kullanýcý oluþtur
                 var user = new User
                 {
-                    Username = model.Username,
-                    Email = model.Email,
-                    Password = BCrypt.Net.BCrypt.HashPassword(model.Password),
-                    Role = UserRole.User, // Varsayýlan rol
+                    Username = request.Username,
+                    Email = request.Email,
+                    Password = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                    Role = UserRole.User, // Normal kullanýcý olarak kaydet
                     CreatedAt = DateTime.UtcNow
                 };
 
                 _context.Users.Add(user);
                 await _context.SaveChangesAsync();
 
-                // Create cart for user
-                var cart = new Cart
-                {
-                    UserId = user.Id,
-                    CreatedAt = DateTime.UtcNow
-                };
-                _context.Carts.Add(cart);
-                await _context.SaveChangesAsync();
-
-                // Generate JWT token
+                // JWT token oluþtur
                 var token = _jwtService.GenerateToken(user);
 
-                _logger.LogInformation($"User registered successfully: {user.Email} with role: {user.Role}");
+                // Hoþ geldin emaili gönder (opsiyonel)
+                try
+                {
+                    await _emailService.SendWelcomeEmailAsync(user.Email, user.Username);
+                }
+                catch (Exception emailEx)
+                {
+                    _logger.LogWarning(emailEx, "Hoþ geldin emaili gönderilemedi: {Email}", user.Email);
+                }
+
+                _logger.LogInformation("Yeni kullanýcý kaydý: {Email}", user.Email);
 
                 return Ok(new AuthResponse
                 {
@@ -88,24 +92,74 @@ namespace webprogbackend.Controllers
                         Id = user.Id,
                         Username = user.Username,
                         Email = user.Email,
-                        Role = user.Role
+                        Role = user.Role,
+                        CreatedAt = user.CreatedAt
                     },
-                    Message = "Registration successful"
+                    Message = "Kayýt baþarýlý"
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error occurred during user registration");
-                return StatusCode(500, new { message = "Registration failed" });
+                _logger.LogError(ex, "Kullanýcý kaydý sýrasýnda hata oluþtu");
+                return StatusCode(500, new { message = "Kayýt sýrasýnda bir hata oluþtu" });
             }
         }
 
         /// <summary>
-        /// Admin kaydý - Sadece mevcut adminler tarafýndan kullanýlabilir
+        /// Kullanýcý Giriþ
         /// </summary>
-        [HttpPost("RegisterAdmin")]
+        [HttpPost("login")]
+        public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                // Kullanýcýyý bul
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Email == request.Email || u.Username == request.Email);
+
+                if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.Password))
+                {
+                    return BadRequest(new { message = "E-posta/kullanýcý adý veya þifre hatalý" });
+                }
+
+                // JWT token oluþtur
+                var token = _jwtService.GenerateToken(user);
+
+                _logger.LogInformation("Kullanýcý giriþi: {Email}", user.Email);
+
+                return Ok(new AuthResponse
+                {
+                    Success = true,
+                    Token = token,
+                    User = new UserInfo
+                    {
+                        Id = user.Id,
+                        Username = user.Username,
+                        Email = user.Email,
+                        Role = user.Role,
+                        CreatedAt = user.CreatedAt
+                    },
+                    Message = "Giriþ baþarýlý"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Kullanýcý giriþi sýrasýnda hata oluþtu");
+                return StatusCode(500, new { message = "Giriþ sýrasýnda bir hata oluþtu" });
+            }
+        }
+
+        /// <summary>
+        /// Admin Kullanýcý Kayýt (Sadece Admin)
+        /// </summary>
+        [HttpPost("admin/register")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<AuthResponse>> RegisterAdmin([FromBody] RegisterAdminModel model)
+        public async Task<ActionResult<AuthResponse>> AdminRegister([FromBody] AdminRegisterRequest request)
         {
             try
             {
@@ -114,90 +168,35 @@ namespace webprogbackend.Controllers
                     return BadRequest(ModelState);
                 }
 
-                // Check if user already exists
-                if (await _context.Users.AnyAsync(u => u.Email == model.Email))
+                // E-posta kontrolü
+                if (await _context.Users.AnyAsync(u => u.Email == request.Email))
                 {
-                    return BadRequest(new { message = "Email already registered" });
+                    return BadRequest(new { message = "Bu e-posta adresi zaten kullanýlýyor" });
                 }
 
-                if (await _context.Users.AnyAsync(u => u.Username == model.Username))
+                // Kullanýcý adý kontrolü
+                if (await _context.Users.AnyAsync(u => u.Username == request.Username))
                 {
-                    return BadRequest(new { message = "Username already taken" });
+                    return BadRequest(new { message = "Bu kullanýcý adý zaten kullanýlýyor" });
                 }
 
-                // Create new admin user
+                // Yeni kullanýcý oluþtur
                 var user = new User
                 {
-                    Username = model.Username,
-                    Email = model.Email,
-                    Password = BCrypt.Net.BCrypt.HashPassword(model.Password),
-                    Role = model.Role, // Admin veya Moderator
+                    Username = request.Username,
+                    Email = request.Email,
+                    Password = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                    Role = request.Role, // Admin istediði rolü verebilir
                     CreatedAt = DateTime.UtcNow
                 };
 
                 _context.Users.Add(user);
                 await _context.SaveChangesAsync();
 
-                // Admin için cart oluþturmaya gerek yok, ama istenirse eklenebilir
-                if (model.CreateCart)
-                {
-                    var cart = new Cart
-                    {
-                        UserId = user.Id,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    _context.Carts.Add(cart);
-                    await _context.SaveChangesAsync();
-                }
-
-                var currentAdmin = User.FindFirst(ClaimTypes.Name)?.Value ?? "Unknown";
-                _logger.LogInformation($"Admin user created: {user.Email} with role: {user.Role} by {currentAdmin}");
-
-                return Ok(new AuthResponse
-                {
-                    Success = true,
-                    Token = null, // Admin kaydýnda token vermiyoruz
-                    User = new UserInfo
-                    {
-                        Id = user.Id,
-                        Username = user.Username,
-                        Email = user.Email,
-                        Role = user.Role
-                    },
-                    Message = $"{user.Role} user created successfully"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error occurred during admin registration");
-                return StatusCode(500, new { message = "Admin registration failed" });
-            }
-        }
-
-        /// <summary>
-        /// Kullanýcý giriþi - Rol bilgisi token'da döner
-        /// </summary>
-        [HttpPost("Login")]
-        public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginModel model)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == model.Email);
-
-                if (user == null || !BCrypt.Net.BCrypt.Verify(model.Password, user.Password))
-                {
-                    return BadRequest(new { message = "Invalid email or password" });
-                }
-
-                // Generate JWT token with role information
+                // JWT token oluþtur
                 var token = _jwtService.GenerateToken(user);
 
-                _logger.LogInformation($"User logged in: {user.Email} with role: {user.Role}");
+                _logger.LogInformation("Admin tarafýndan yeni kullanýcý oluþturuldu: {Email}, Role: {Role}", user.Email, user.Role);
 
                 return Ok(new AuthResponse
                 {
@@ -208,146 +207,223 @@ namespace webprogbackend.Controllers
                         Id = user.Id,
                         Username = user.Username,
                         Email = user.Email,
-                        Role = user.Role
+                        Role = user.Role,
+                        CreatedAt = user.CreatedAt
                     },
-                    Message = "Login successful"
+                    Message = "Admin kayýt baþarýlý"
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error occurred during user login");
-                return StatusCode(500, new { message = "Login failed" });
+                _logger.LogError(ex, "Admin kullanýcý kaydý sýrasýnda hata oluþtu");
+                return StatusCode(500, new { message = "Kayýt sýrasýnda bir hata oluþtu" });
             }
         }
 
-
-
-        
-
-
-        [HttpPost("Logout")]
-        [Authorize]
-        public ActionResult Logout()
-        {
-            return Ok(new { message = "Logout successful" });
-        }
-
-        [HttpPost("ValidateToken")]
-        public ActionResult ValidateToken([FromBody] ValidateTokenModel model)
+        /// <summary>
+        /// Admin Giriþ (Sadece Admin Rolü)
+        /// </summary>
+        [HttpPost("admin/login")]
+        public async Task<ActionResult<AuthResponse>> AdminLogin([FromBody] LoginRequest request)
         {
             try
             {
-                var isValid = _jwtService.IsTokenValid(model.Token);
-                return Ok(new { isValid });
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                // Admin kullanýcýsýný bul
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(u => (u.Email == request.Email || u.Username == request.Email)
+                                            && u.Role == UserRole.Admin);
+
+                if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.Password))
+                {
+                    return BadRequest(new { message = "Admin giriþi baþarýsýz - bilgiler hatalý veya yetkiniz yok" });
+                }
+
+                // JWT token oluþtur
+                var token = _jwtService.GenerateToken(user);
+
+                _logger.LogInformation("Admin giriþi: {Email}", user.Email);
+
+                return Ok(new AuthResponse
+                {
+                    Success = true,
+                    Token = token,
+                    User = new UserInfo
+                    {
+                        Id = user.Id,
+                        Username = user.Username,
+                        Email = user.Email,
+                        Role = user.Role,
+                        CreatedAt = user.CreatedAt
+                    },
+                    Message = "Admin giriþ baþarýlý"
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error occurred during token validation");
-                return Ok(new { isValid = false });
+                _logger.LogError(ex, "Admin giriþi sýrasýnda hata oluþtu");
+                return StatusCode(500, new { message = "Giriþ sýrasýnda bir hata oluþtu" });
             }
         }
 
-        #region Private Methods
-
-        private List<string> GetRolePermissions(UserRole role)
+        /// <summary>
+        /// Þifre Deðiþtir
+        /// </summary>
+        [HttpPost("change-password")]
+        [Authorize]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
         {
-            return role switch
+            try
             {
-                UserRole.Admin => new List<string>
+                if (!ModelState.IsValid)
                 {
-                    "user.manage",
-                    "product.manage",
-                    "order.manage",
-                    "dashboard.admin",
-                    "role.change",
-                    "system.admin"
-                },
-                UserRole.Moderator => new List<string>
+                    return BadRequest(ModelState);
+                }
+
+                var userId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value);
+                var user = await _context.Users.FindAsync(userId);
+
+                if (user == null)
                 {
-                    "product.manage",
-                    "order.view",
-                    "user.view",
-                    "dashboard.moderator"
-                },
-                UserRole.User => new List<string>
+                    return NotFound(new { message = "Kullanýcý bulunamadý" });
+                }
+
+                // Mevcut þifreyi kontrol et
+                if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.Password))
                 {
-                    "product.view",
-                    "cart.manage",
-                    "order.own",
-                    "profile.manage"
-                },
-                _ => new List<string>()
-            };
+                    return BadRequest(new { message = "Mevcut þifre hatalý" });
+                }
+
+                // Yeni þifreyi kaydet
+                user.Password = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Þifre deðiþtirildi: {Email}", user.Email);
+
+                return Ok(new { message = "Þifre baþarýyla deðiþtirildi" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Þifre deðiþtirme sýrasýnda hata oluþtu");
+                return StatusCode(500, new { message = "Þifre deðiþtirme sýrasýnda bir hata oluþtu" });
+            }
         }
 
-        #endregion
+        /// <summary>
+        /// Profil Bilgilerini Getir
+        /// </summary>
+        [HttpGet("profile")]
+        [Authorize]
+        public async Task<ActionResult<UserInfo>> GetProfile()
+        {
+            try
+            {
+                var userId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value);
+                var user = await _context.Users
+                    .Include(u => u.Orders)
+                    .FirstOrDefaultAsync(u => u.Id == userId);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "Kullanýcý bulunamadý" });
+                }
+
+                return Ok(new UserInfo
+                {
+                    Id = user.Id,
+                    Username = user.Username,
+                    Email = user.Email,
+                    Role = user.Role,
+                    CreatedAt = user.CreatedAt,
+                    OrderCount = user.Orders.Count(),
+                    TotalSpent = user.Orders.Where(o => o.Status != "Cancelled").Sum(o => o.TotalAmount)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Profil getirme sýrasýnda hata oluþtu");
+                return StatusCode(500, new { message = "Profil bilgileri alýnamadý" });
+            }
+        }
+
+        /// <summary>
+        /// Token Geçerliliðini Kontrol Et
+        /// </summary>
+        [HttpPost("validate-token")]
+        [Authorize]
+        public IActionResult ValidateToken()
+        {
+            return Ok(new { message = "Token geçerli", isValid = true });
+        }
+
+        /// <summary>
+        /// Çýkýþ Yap (Token client-side'da silinir)
+        /// </summary>
+        [HttpPost("logout")]
+        [Authorize]
+        public IActionResult Logout()
+        {
+            _logger.LogInformation("Kullanýcý çýkýþý yapýldý");
+            return Ok(new { message = "Baþarýyla çýkýþ yapýldý" });
+        }
     }
 
     #region DTO Models
 
-    public class RegisterModel
+    public class RegisterRequest
     {
-        [Required]
+        [Required(ErrorMessage = "Kullanýcý adý zorunludur")]
         [StringLength(50, MinimumLength = 3)]
         public string Username { get; set; }
 
-        [Required]
-        [EmailAddress]
+        [Required(ErrorMessage = "E-posta zorunludur")]
+        [EmailAddress(ErrorMessage = "Geçerli bir e-posta adresi giriniz")]
         public string Email { get; set; }
 
-        [Required]
-        [StringLength(100, MinimumLength = 6)]
-        public string Password { get; set; }
-
-        [Required]
-        [Compare("Password")]
-        public string ConfirmPassword { get; set; }
-    }
-
-    public class RegisterAdminModel : RegisterModel
-    {
-        [Required]
-        public UserRole Role { get; set; } = UserRole.Admin;
-
-        public bool CreateCart { get; set; } = false;
-    }
-
-    public class LoginModel
-    {
-        [Required]
-        [EmailAddress]
-        public string Email { get; set; }
-
-        [Required]
+        [Required(ErrorMessage = "Þifre zorunludur")]
+        [StringLength(100, MinimumLength = 6, ErrorMessage = "Þifre en az 6 karakter olmalýdýr")]
         public string Password { get; set; }
     }
 
-    public class ChangePasswordModel
+    public class AdminRegisterRequest
     {
-        [Required]
+        [Required(ErrorMessage = "Kullanýcý adý zorunludur")]
+        [StringLength(50, MinimumLength = 3)]
+        public string Username { get; set; }
+
+        [Required(ErrorMessage = "E-posta zorunludur")]
+        [EmailAddress(ErrorMessage = "Geçerli bir e-posta adresi giriniz")]
+        public string Email { get; set; }
+
+        [Required(ErrorMessage = "Þifre zorunludur")]
+        [StringLength(100, MinimumLength = 6, ErrorMessage = "Þifre en az 6 karakter olmalýdýr")]
+        public string Password { get; set; }
+
+        [Required(ErrorMessage = "Rol zorunludur")]
+        public UserRole Role { get; set; }
+    }
+
+    public class LoginRequest
+    {
+        [Required(ErrorMessage = "E-posta veya kullanýcý adý zorunludur")]
+        public string Email { get; set; }
+
+        [Required(ErrorMessage = "Þifre zorunludur")]
+        public string Password { get; set; }
+    }
+
+    public class ChangePasswordRequest
+    {
+        [Required(ErrorMessage = "Mevcut þifre zorunludur")]
         public string CurrentPassword { get; set; }
 
-        [Required]
-        [StringLength(100, MinimumLength = 6)]
+        [Required(ErrorMessage = "Yeni þifre zorunludur")]
+        [StringLength(100, MinimumLength = 6, ErrorMessage = "Þifre en az 6 karakter olmalýdýr")]
         public string NewPassword { get; set; }
-
-        [Required]
-        [Compare("NewPassword")]
-        public string ConfirmNewPassword { get; set; }
-    }
-
-    public class ChangeRoleModel
-    {
-        [Required]
-        public UserRole NewRole { get; set; }
-
-        public string? Reason { get; set; }
-    }
-
-    public class ValidateTokenModel
-    {
-        [Required]
-        public string Token { get; set; }
     }
 
     public class AuthResponse
@@ -364,17 +440,9 @@ namespace webprogbackend.Controllers
         public string Username { get; set; }
         public string Email { get; set; }
         public UserRole Role { get; set; }
-    }
-
-    public class UserRoleInfo : UserInfo
-    {
-        public string RoleName { get; set; }
-        public List<string> Permissions { get; set; } = new();
-        public bool IsAdmin { get; set; }
-        public bool IsModerator { get; set; }
-        public bool IsUser { get; set; }
         public DateTime CreatedAt { get; set; }
-        public DateTime? UpdatedAt { get; set; }
+        public int OrderCount { get; set; } = 0;
+        public decimal TotalSpent { get; set; } = 0;
     }
 
     #endregion

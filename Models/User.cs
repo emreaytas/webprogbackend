@@ -8,33 +8,28 @@ namespace webprogbackend.Models
     {
         public int Id { get; set; }
 
-        [Required]
-        [StringLength(50, MinimumLength = 3)]
+        [Required(ErrorMessage = "Kullanýcý adý zorunludur")]
+        [StringLength(50, MinimumLength = 3, ErrorMessage = "Kullanýcý adý 3-50 karakter arasýnda olmalýdýr")]
         public string Username { get; set; }
 
-        [Required]
-        [EmailAddress]
+        [Required(ErrorMessage = "E-posta zorunludur")]
+        [EmailAddress(ErrorMessage = "Geçerli bir e-posta adresi giriniz")]
         public string Email { get; set; }
 
-        [Required]
-        [JsonIgnore] // Don't serialize password in API responses
+        [Required(ErrorMessage = "Þifre zorunludur")]
+        [JsonIgnore] // API yanýtlarýnda þifreyi gizle
         public string Password { get; set; }
 
         [Required]
-        [JsonConverter(typeof(JsonStringEnumConverter))]
         public UserRole Role { get; set; } = UserRole.User;
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public DateTime? UpdatedAt { get; set; }
 
         // Navigation properties
         public virtual ICollection<Order> Orders { get; set; } = new List<Order>();
-        public virtual Cart Cart { get; set; }
 
-        // Helper methods for role checking
+        // Helper methods
         public bool IsAdmin() => Role == UserRole.Admin;
-        public bool IsModerator() => Role == UserRole.Moderator;
         public bool IsUser() => Role == UserRole.User;
-        public bool HasAdminOrModeratorRole() => Role == UserRole.Admin || Role == UserRole.Moderator;
     }
 }

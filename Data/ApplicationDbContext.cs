@@ -28,9 +28,9 @@ namespace webprogbackend.Data
 
             // Configure relationships and constraints
             modelBuilder.Entity<User>()
-                .HasOne(u => u.Cart)
-                .WithOne(c => c.User)
-                .HasForeignKey<Cart>(c => c.UserId);
+                .HasMany(u => u.Orders)
+                .WithOne(o => o.User)
+                .HasForeignKey(o => o.UserId);
 
             modelBuilder.Entity<Cart>()
                 .HasMany(c => c.CartItems)
@@ -50,6 +50,7 @@ namespace webprogbackend.Data
             modelBuilder.Entity<Order>()
                 .Property(o => o.TotalAmount)
                 .HasPrecision(18, 2);
+
             modelBuilder.Entity<OrderItem>()
                 .Property(oi => oi.UnitPrice)
                 .HasPrecision(18, 2);
