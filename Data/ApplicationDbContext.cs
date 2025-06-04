@@ -42,6 +42,18 @@ namespace webprogbackend.Data
                 .WithOne(oi => oi.Order)
                 .HasForeignKey(oi => oi.OrderId);
 
+            // Product ile CartItems arasýndaki iliþki
+            modelBuilder.Entity<Product>()
+                .HasMany(p => p.CartItems)
+                .WithOne(ci => ci.Product)
+                .HasForeignKey(ci => ci.ProductId);
+
+            // Product ile OrderItems arasýndaki iliþki
+            modelBuilder.Entity<Product>()
+                .HasMany(p => p.OrderItems)
+                .WithOne(oi => oi.Product)
+                .HasForeignKey(oi => oi.ProductId);
+
             // Configure decimal precision
             modelBuilder.Entity<Product>()
                 .Property(p => p.Price)
@@ -75,6 +87,15 @@ namespace webprogbackend.Data
                 .Property(p => p.Category)
                 .IsRequired()
                 .HasMaxLength(50);
+
+            // Navigation properties'lerin required olmamasýný saðla
+            modelBuilder.Entity<Product>()
+                .Navigation(p => p.CartItems)
+                .EnableLazyLoading(false);
+
+            modelBuilder.Entity<Product>()
+                .Navigation(p => p.OrderItems)
+                .EnableLazyLoading(false);
         }
     }
 }

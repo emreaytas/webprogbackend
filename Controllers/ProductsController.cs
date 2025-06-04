@@ -1,12 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.ComponentModel.DataAnnotations;
-using System.Security.Claims;
-using webprogbackend.Attributes;
 using webprogbackend.Data;
 using webprogbackend.Models;
+using webprogbackend.Attributes;
 using webprogbackend.Models.Enums;
+using System.ComponentModel.DataAnnotations;
 
 namespace webprogbackend.Controllers
 {
@@ -15,124 +14,59 @@ namespace webprogbackend.Controllers
     public class ProductsController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly ILogger<ProductsController> _logger;
 
-        public ProductsController(ApplicationDbContext context)
+        public ProductsController(ApplicationDbContext context, ILogger<ProductsController> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
-
-        [HttpPost("Add")]
-        [Consumes("multipart/form-data")]
-        public async Task<ActionResult<Product>> AddProduct([FromForm] ProductCreateDto dto)
+        // GET: api/Products/All
+        [HttpGet("All")]
+        public async Task<ActionResult<IEnumerable<Product>>> GetAllProducts()
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    var errors = ModelState
-                        .Where(x => x.Value.Errors.Count > 0)
-                        .Select(x => new { Field = x.Key, Errors = x.Value.Errors.Select(e => e.ErrorMessage) })
-                        .ToList();
+                var products = await _context.Products
+                    .OrderByDescending(p => p.CreatedAt)
+                    .ToListAsync();
 
-                    return BadRequest(new { message = "Validation errors", errors });
-                }
-
-                var product = new Product
-                {
-                    Name = dto.Name,
-                    Description = dto.Description,
-                    Price = dto.Price,
-                    StockQuantity = dto.StockQuantity,
-                    Category = dto.Category,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                // Resim yükleme iþlemi
-                if (dto.Image != null && dto.Image.Length > 0)
-                {
-                    // Dosya boyutu kontrolü (5MB limit)
-                    if (dto.Image.Length > 5 * 1024 * 1024)
-                    {
-                        return BadRequest(new { message = "Dosya boyutu 5MB'dan büyük olamaz." });
-                    }
-
-                    // Dosya türü kontrolü
-                    var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" };
-                    if (!allowedTypes.Contains(dto.Image.ContentType?.ToLower()))
-                    {
-                        return BadRequest(new { message = "Sadece JPEG, PNG, GIF ve WebP dosyalarý kabul edilir." });
-                    }
-
-                    try
-                    {
-                        using var ms = new MemoryStream();
-                        await dto.Image.CopyToAsync(ms);
-                        product.ImageData = ms.ToArray();
-
-                        // Log dosya bilgilerini
-                        Console.WriteLine($"Image uploaded: {dto.Image.FileName}, Size: {dto.Image.Length} bytes, Type: {dto.Image.ContentType}");
-                    }
-                    catch (Exception ex)
-                    {
-                        return BadRequest(new { message = "Resim yüklenirken hata oluþtu", error = ex.Message });
-                    }
-                }
-
-                _context.Products.Add(product);
-                await _context.SaveChangesAsync();
-
-                return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, new
-                {
-                    product.Id,
-                    product.Name,
-                    product.Description,
-                    product.Price,
-                    product.StockQuantity,
-                    product.Category,
-                    product.CreatedAt,
-                    HasImage = product.ImageData != null && product.ImageData.Length > 0,
-                    ImageSize = product.ImageData?.Length ?? 0
-                });
+                return Ok(products);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in AddProduct: {ex.Message}");
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
-                return StatusCode(500, new { message = "Sunucu hatasý oluþtu", error = ex.Message });
+                _logger.LogError(ex, "Error getting all products");
+                return StatusCode(500, new { message = "Ürünler yüklenirken hata oluþtu" });
             }
         }
 
-        [HttpPost("Add2")]
-        public async Task<ActionResult<Product>> AddProduct2([FromForm] ProductCreateDto dto)
+        // GET: api/Products/5
+        [HttpGet("{id}")]
+        public async Task<ActionResult<Product>> GetProduct(int id)
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
-
-            var product = new Product
+            try
             {
-                Name = dto.Name,
-                Description = dto.Description,
-                Price = dto.Price,
-                StockQuantity = dto.StockQuantity,
-                Category = dto.Category,
-                CreatedAt = DateTime.UtcNow
-            };
+                var product = await _context.Products.FindAsync(id);
 
-            if (dto.Image is { Length: > 0 })
-            {
-                using var ms = new MemoryStream();
-                await dto.Image.CopyToAsync(ms);
-                product.ImageData = ms.ToArray();
+                if (product == null)
+                {
+                    return NotFound(new { message = "Ürün bulunamadý" });
+                }
+
+                return Ok(product);
             }
-
-            _context.Products.Add(product);
-            await _context.SaveChangesAsync();
-            return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting product {ProductId}", id);
+                return StatusCode(500, new { message = "Ürün yüklenirken hata oluþtu" });
+            }
         }
 
-
-        [HttpPost("AddSimple")]
-        public async Task<ActionResult<Product>> AddSimpleProduct([FromBody] SimpleProductDto dto)
+        // POST: api/Products
+        [HttpPost]
+        [Authorize] // Giriþ yapmýþ kullanýcýlar ürün ekleyebilir
+        public async Task<ActionResult<Product>> CreateProduct(CreateProductDto productDto)
         {
             try
             {
@@ -143,279 +77,61 @@ namespace webprogbackend.Controllers
 
                 var product = new Product
                 {
-                    Name = dto.Name,
-                    Description = dto.Description,
-                    Price = dto.Price,
-                    StockQuantity = dto.StockQuantity,
-                    Category = dto.Category,
-                    ImageUrl = dto.ImageUrl, // URL olarak
+                    Name = productDto.Name,
+                    Description = productDto.Description,
+                    Price = productDto.Price,
+                    StockQuantity = productDto.StockQuantity,
+                    Category = productDto.Category,
+                    ImageUrl = productDto.ImageUrl,
                     CreatedAt = DateTime.UtcNow
                 };
 
                 _context.Products.Add(product);
                 await _context.SaveChangesAsync();
 
+                _logger.LogInformation("Product created: {ProductName} (ID: {ProductId})", product.Name, product.Id);
+
                 return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Sunucu hatasý: {ex.Message}" });
+                _logger.LogError(ex, "Error creating product");
+                return StatusCode(500, new { message = "Ürün oluþturulurken hata oluþtu" });
             }
         }
 
-        // Ayrý endpoint ile resim yükleme - Swagger'dan ayrý test edin
-        [HttpPost("{id}/upload-image")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<ActionResult> UploadProductImage(int id, IFormFile image)
+        // PUT: api/Products/5
+        [HttpPut("{id}")]
+        [Authorize]
+        public async Task<IActionResult> UpdateProduct(int id, UpdateProductDto productDto)
         {
             try
             {
                 var product = await _context.Products.FindAsync(id);
                 if (product == null)
-                    return NotFound();
+                {
+                    return NotFound(new { message = "Ürün bulunamadý" });
+                }
 
-                if (image == null || image.Length == 0)
-                    return BadRequest("Resim dosyasý gereklidir");
-
-                // Dosya boyutu kontrolü (5MB limit)
-                if (image.Length > 5 * 1024 * 1024)
-                    return BadRequest("Dosya boyutu 5MB'dan büyük olamaz");
-
-                // Dosya türü kontrolü
-                var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif" };
-                if (!allowedTypes.Contains(image.ContentType))
-                    return BadRequest("Sadece JPEG, PNG ve GIF dosyalarý kabul edilir");
-
-                using var ms = new MemoryStream();
-                await image.CopyToAsync(ms);
-                product.ImageData = ms.ToArray();
+                product.Name = productDto.Name;
+                product.Description = productDto.Description;
+                product.Price = productDto.Price;
+                product.StockQuantity = productDto.StockQuantity;
+                product.Category = productDto.Category;
+                product.ImageUrl = productDto.ImageUrl;
                 product.UpdatedAt = DateTime.UtcNow;
 
                 await _context.SaveChangesAsync();
 
-                return Ok(new { message = "Resim baþarýyla yüklendi", imageSize = image.Length });
+                _logger.LogInformation("Product updated: {ProductName} (ID: {ProductId})", product.Name, product.Id);
+
+                return Ok(product);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Sunucu hatasý: {ex.Message}" });
+                _logger.LogError(ex, "Error updating product {ProductId}", id);
+                return StatusCode(500, new { message = "Ürün güncellenirken hata oluþtu" });
             }
-        }
-
-
-
-        [HttpGet("TopStock")]
-        public async Task<ActionResult<IEnumerable<object>>> GetTopStockProducts([FromQuery] int count = 3)
-        {
-            var products = await _context.Products
-                .OrderByDescending(p => p.StockQuantity)
-                .ThenBy(p => p.Name)
-                .Take(count)
-                .Select(p => new
-                {
-                    p.Id,
-                    p.Name,
-                    p.StockQuantity,
-                    p.Price,
-                    p.Category
-                })
-                .ToListAsync();
-
-            return products;
-        }
-
-        [HttpGet("TopSelling")]
-        public async Task<ActionResult<IEnumerable<object>>> GetTopSellingProducts([FromQuery] int count = 3)
-        {
-            var topSelling = await _context.OrderItems
-                .GroupBy(oi => oi.ProductId)
-                .Select(g => new
-                {
-                    ProductId = g.Key,
-                    TotalSold = g.Sum(oi => oi.Quantity),
-                    Revenue = g.Sum(oi => oi.Quantity * oi.UnitPrice)
-                })
-                .OrderByDescending(x => x.TotalSold)
-                .Take(count)
-                .Join(_context.Products,
-                      ts => ts.ProductId,
-                      p => p.Id,
-                      (ts, p) => new
-                      {
-                          p.Id,
-                          p.Name,
-                          p.Category,
-                          ts.TotalSold,
-                          ts.Revenue,
-                          p.StockQuantity
-                      })
-                .ToListAsync();
-
-            return topSelling;
-        }
-
-        [HttpGet("All")]
-        public async Task<ActionResult<IEnumerable<Product>>> GetAllProducts()
-        {
-            var products = await _context.Products
-                .OrderBy(p => p.Name)
-                .ToListAsync();
-            return products;
-        }
-
-        // GET: api/Products
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<Product>>> GetProducts(
-            [FromQuery] string searchTerm = null,
-            [FromQuery] string category = null,
-            [FromQuery] decimal? minPrice = null,
-            [FromQuery] decimal? maxPrice = null,
-            [FromQuery] bool? inStock = null,
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 10,
-            [FromQuery] string sortBy = "name",
-            [FromQuery] string sortOrder = "asc")
-        {
-            var query = _context.Products.AsQueryable();
-
-            // Apply filters
-            if (!string.IsNullOrWhiteSpace(searchTerm))
-            {
-                query = query.Where(p => p.Name.Contains(searchTerm) || p.Description.Contains(searchTerm));
-            }
-
-            if (!string.IsNullOrWhiteSpace(category))
-            {
-                query = query.Where(p => p.Category.ToLower() == category.ToLower());
-            }
-
-            if (minPrice.HasValue)
-            {
-                query = query.Where(p => p.Price >= minPrice.Value);
-            }
-
-            if (maxPrice.HasValue)
-            {
-                query = query.Where(p => p.Price <= maxPrice.Value);
-            }
-
-            if (inStock.HasValue)
-            {
-                if (inStock.Value)
-                    query = query.Where(p => p.StockQuantity > 0);
-                else
-                    query = query.Where(p => p.StockQuantity == 0);
-            }
-
-            // Apply sorting
-            query = sortBy.ToLower() switch
-            {
-                "price" => sortOrder.ToLower() == "desc"
-                    ? query.OrderByDescending(p => p.Price)
-                    : query.OrderBy(p => p.Price),
-                "stock" => sortOrder.ToLower() == "desc"
-                    ? query.OrderByDescending(p => p.StockQuantity)
-                    : query.OrderBy(p => p.StockQuantity),
-                "created" => sortOrder.ToLower() == "desc"
-                    ? query.OrderByDescending(p => p.CreatedAt)
-                    : query.OrderBy(p => p.CreatedAt),
-                _ => sortOrder.ToLower() == "desc"
-                    ? query.OrderByDescending(p => p.Name)
-                    : query.OrderBy(p => p.Name)
-            };
-
-            var totalCount = await query.CountAsync();
-            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
-
-            var products = await query
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
-
-            Response.Headers.Add("X-Total-Count", totalCount.ToString());
-            Response.Headers.Add("X-Total-Pages", totalPages.ToString());
-            Response.Headers.Add("X-Current-Page", page.ToString());
-
-            return products;
-        }
-
-        // GET: api/Products/5
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Product>> GetProduct(int id)
-        {
-            var product = await _context.Products.FindAsync(id);
-
-            if (product == null)
-            {
-                return NotFound();
-            }
-
-            return product;
-        }
-
-        // PUT: api/Products/5
-        [HttpPut("{id}")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<IActionResult> PutProduct(int id, Product product)
-        {
-            if (id != product.Id)
-            {
-                return BadRequest();
-            }
-
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var existingProduct = await _context.Products.FindAsync(id);
-            if (existingProduct == null)
-            {
-                return NotFound();
-            }
-
-            // Update properties
-            existingProduct.Name = product.Name;
-            existingProduct.Description = product.Description;
-            existingProduct.Price = product.Price;
-            existingProduct.StockQuantity = product.StockQuantity;
-            existingProduct.Category = product.Category;
-            existingProduct.ImageUrl = product.ImageUrl;
-            existingProduct.UpdatedAt = DateTime.UtcNow;
-
-            try
-            {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!ProductExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
-            }
-
-            return NoContent();
-        }
-
-        // POST: api/Products
-        [HttpPost]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<ActionResult<Product>> PostProduct(Product product)
-        {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            product.CreatedAt = DateTime.UtcNow;
-            _context.Products.Add(product);
-            await _context.SaveChangesAsync();
-
-            return CreatedAtAction("GetProduct", new { id = product.Id }, product);
         }
 
         // DELETE: api/Products/5
@@ -423,206 +139,412 @@ namespace webprogbackend.Controllers
         [AuthorizeRoles(UserRole.Admin)]
         public async Task<IActionResult> DeleteProduct(int id)
         {
-            var product = await _context.Products.FindAsync(id);
-            if (product == null)
+            try
             {
-                return NotFound();
-            }
+                var product = await _context.Products.FindAsync(id);
+                if (product == null)
+                {
+                    return NotFound(new { message = "Ürün bulunamadý" });
+                }
 
-            // Check if product is in any orders
-            var isInOrders = await _context.OrderItems.AnyAsync(oi => oi.ProductId == id);
-            if (isInOrders)
+                _context.Products.Remove(product);
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Product deleted: {ProductName} (ID: {ProductId})", product.Name, product.Id);
+
+                return Ok(new { message = "Ürün baþarýyla silindi" });
+            }
+            catch (Exception ex)
             {
-                return BadRequest("Cannot delete product that exists in orders. Consider setting stock to 0 instead.");
+                _logger.LogError(ex, "Error deleting product {ProductId}", id);
+                return StatusCode(500, new { message = "Ürün silinirken hata oluþtu" });
             }
-
-            // Check if product is in any carts
-            var isInCarts = await _context.CartItems.AnyAsync(ci => ci.ProductId == id);
-            if (isInCarts)
-            {
-                // Remove from all carts
-                var cartItems = await _context.CartItems.Where(ci => ci.ProductId == id).ToListAsync();
-                _context.CartItems.RemoveRange(cartItems);
-            }
-
-            _context.Products.Remove(product);
-            await _context.SaveChangesAsync();
-
-            return NoContent();
         }
 
-        // GET: api/Products/Featured
-        [HttpGet("Featured")]
-        public async Task<ActionResult<IEnumerable<Product>>> GetFeaturedProducts([FromQuery] int count = 6)
+        // GET: api/Products/TopStock/3
+        [HttpGet("TopStock/{count:int?}")]
+        public async Task<ActionResult<IEnumerable<object>>> GetTopStockProducts(int count = 3)
         {
-            var featuredProducts = await _context.Products
-                .Where(p => p.StockQuantity > 0)
-                .OrderByDescending(p => p.CreatedAt)
-                .Take(count)
-                .ToListAsync();
+            try
+            {
+                var topStockProducts = await _context.Products
+                    .OrderByDescending(p => p.StockQuantity)
+                    .Take(count)
+                    .Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        p.Category,
+                        p.Price,
+                        p.StockQuantity,
+                        p.ImageUrl,
+                        p.Description
+                    })
+                    .ToListAsync();
 
-            return featuredProducts;
+                return Ok(new
+                {
+                    message = $"En fazla stoða sahip {count} ürün",
+                    count = topStockProducts.Count,
+                    products = topStockProducts
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting top stock products");
+                return StatusCode(500, new { message = "En yüksek stoklu ürünler yüklenirken hata oluþtu" });
+            }
         }
 
-        // GET: api/Products/Search
-        [HttpGet("Search")]
-        public async Task<ActionResult<IEnumerable<Product>>> SearchProducts([FromQuery] string q)
+        // GET: api/Products/LowStock/10
+        [HttpGet("LowStock/{threshold:int?}")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<object>>> GetLowStockProducts(int threshold = 10)
         {
-            if (string.IsNullOrWhiteSpace(q))
+            try
             {
-                return BadRequest("Search query cannot be empty");
+                var lowStockProducts = await _context.Products
+                    .Where(p => p.StockQuantity <= threshold && p.StockQuantity > 0)
+                    .OrderBy(p => p.StockQuantity)
+                    .Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        p.Category,
+                        p.Price,
+                        p.StockQuantity,
+                        p.ImageUrl,
+                        StockStatus = p.StockQuantity <= 5 ? "Kritik" : "Düþük"
+                    })
+                    .ToListAsync();
+
+                return Ok(new
+                {
+                    message = $"Stok seviyesi {threshold} ve altýnda olan ürünler",
+                    threshold,
+                    count = lowStockProducts.Count,
+                    products = lowStockProducts
+                });
             }
-
-            var searchResults = await _context.Products
-                .Where(p => p.Name.Contains(q) ||
-                           p.Description.Contains(q) ||
-                           p.Category.Contains(q))
-                .Take(20)
-                .ToListAsync();
-
-            return searchResults;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting low stock products");
+                return StatusCode(500, new { message = "Düþük stoklu ürünler yüklenirken hata oluþtu" });
+            }
         }
 
-        // PUT: api/Products/5/Stock
-        [HttpPut("{id}/Stock")]
-        [AuthorizeRoles(UserRole.Admin)]
-        public async Task<IActionResult> UpdateStock(int id, [FromBody] UpdateStockModel model)
+        // GET: api/Products/OutOfStock
+        [HttpGet("OutOfStock")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<object>>> GetOutOfStockProducts()
         {
-            var product = await _context.Products.FindAsync(id);
-            if (product == null)
+            try
             {
-                return NotFound();
-            }
+                var outOfStockProducts = await _context.Products
+                    .Where(p => p.StockQuantity == 0)
+                    .OrderBy(p => p.Name)
+                    .Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        p.Category,
+                        p.Price,
+                        p.StockQuantity,
+                        p.ImageUrl,
+                        p.UpdatedAt
+                    })
+                    .ToListAsync();
 
-            if (model.Quantity < 0)
+                return Ok(new
+                {
+                    message = "Tükenen ürünler",
+                    count = outOfStockProducts.Count,
+                    products = outOfStockProducts
+                });
+            }
+            catch (Exception ex)
             {
-                return BadRequest("Stock quantity cannot be negative");
+                _logger.LogError(ex, "Error getting out of stock products");
+                return StatusCode(500, new { message = "Tükenen ürünler yüklenirken hata oluþtu" });
             }
-
-            product.StockQuantity = model.Quantity;
-            product.UpdatedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-
-            return NoContent();
         }
+
+        // GET: api/Products/Search/iphone
+        [HttpGet("Search/{query}")]
+        public async Task<ActionResult<IEnumerable<Product>>> SearchProducts(string query)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    return BadRequest(new { message = "Arama terimi boþ olamaz" });
+                }
+
+                var products = await _context.Products
+                    .Where(p => p.Name.Contains(query) ||
+                               p.Description.Contains(query) ||
+                               p.Category.Contains(query))
+                    .OrderByDescending(p => p.CreatedAt)
+                    .ToListAsync();
+
+                return Ok(new
+                {
+                    message = $"'{query}' için arama sonuçlarý",
+                    query,
+                    count = products.Count,
+                    products
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error searching products with query: {Query}", query);
+                return StatusCode(500, new { message = "Ürün arama sýrasýnda hata oluþtu" });
+            }
+        }
+
+        // GET: api/Products/Category/Telefon
+        [HttpGet("Category/{category}")]
+        public async Task<ActionResult<IEnumerable<Product>>> GetProductsByCategory(string category)
+        {
+            try
+            {
+                var products = await _context.Products
+                    .Where(p => p.Category.ToLower() == category.ToLower())
+                    .OrderByDescending(p => p.CreatedAt)
+                    .ToListAsync();
+
+                return Ok(new
+                {
+                    message = $"'{category}' kategorisindeki ürünler",
+                    category,
+                    count = products.Count,
+                    products
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting products by category: {Category}", category);
+                return StatusCode(500, new { message = "Kategori ürünleri yüklenirken hata oluþtu" });
+            }
+        }
+
+        // GET: api/Products/PriceRange?min=100&max=1000
+        [HttpGet("PriceRange")]
+        public async Task<ActionResult<IEnumerable<Product>>> GetProductsByPriceRange(
+            [FromQuery] decimal? min = null,
+            [FromQuery] decimal? max = null,
+            [FromQuery] string? category = null)
+        {
+            try
+            {
+                var query = _context.Products.AsQueryable();
+
+                if (min.HasValue)
+                    query = query.Where(p => p.Price >= min.Value);
+
+                if (max.HasValue)
+                    query = query.Where(p => p.Price <= max.Value);
+
+                if (!string.IsNullOrWhiteSpace(category))
+                    query = query.Where(p => p.Category.ToLower() == category.ToLower());
+
+                var products = await query
+                    .OrderBy(p => p.Price)
+                    .ToListAsync();
+
+                return Ok(new
+                {
+                    message = "Fiyat aralýðýndaki ürünler",
+                    filters = new { min, max, category },
+                    count = products.Count,
+                    products
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting products by price range");
+                return StatusCode(500, new { message = "Fiyat aralýðý sorgusu sýrasýnda hata oluþtu" });
+            }
+        }
+
+        // GET: api/Products/Featured/6
+        [HttpGet("Featured/{count:int?}")]
+        public async Task<ActionResult<IEnumerable<object>>> GetFeaturedProducts(int count = 6)
+        {
+            try
+            {
+                // En yüksek stoklu ve en yeni ürünleri featured olarak kabul edelim
+                var featuredProducts = await _context.Products
+                    .Where(p => p.StockQuantity > 0)
+                    .OrderByDescending(p => p.StockQuantity)
+                    .ThenByDescending(p => p.CreatedAt)
+                    .Take(count)
+                    .Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        p.Category,
+                        p.Price,
+                        p.StockQuantity,
+                        p.ImageUrl,
+                        p.Description,
+                        IsFeatured = true,
+                        p.CreatedAt
+                    })
+                    .ToListAsync();
+
+                return Ok(new
+                {
+                    message = $"Öne çýkan {count} ürün",
+                    count = featuredProducts.Count,
+                    products = featuredProducts
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting featured products");
+                return StatusCode(500, new { message = "Öne çýkan ürünler yüklenirken hata oluþtu" });
+            }
+        }
+
+        // GET: api/Products/Categories
+        [HttpGet("Categories")]
+        public async Task<ActionResult<IEnumerable<object>>> GetCategories()
+        {
+            try
+            {
+                var categories = await _context.Products
+                    .GroupBy(p => p.Category)
+                    .Select(g => new
+                    {
+                        Category = g.Key,
+                        ProductCount = g.Count(),
+                        TotalStock = g.Sum(p => p.StockQuantity),
+                        AveragePrice = g.Average(p => p.Price),
+                        MinPrice = g.Min(p => p.Price),
+                        MaxPrice = g.Max(p => p.Price)
+                    })
+                    .OrderByDescending(c => c.ProductCount)
+                    .ToListAsync();
+
+                return Ok(new
+                {
+                    message = "Tüm kategoriler ve istatistikleri",
+                    count = categories.Count,
+                    categories
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting categories");
+                return StatusCode(500, new { message = "Kategoriler yüklenirken hata oluþtu" });
+            }
+        }
+
+
 
         // GET: api/Products/Stats
         [HttpGet("Stats")]
-        [AuthorizeRoles(UserRole.Admin)]
+        [Authorize]
         public async Task<ActionResult<object>> GetProductStats()
         {
-            var totalProducts = await _context.Products.CountAsync();
-            var inStockProducts = await _context.Products.CountAsync(p => p.StockQuantity > 0);
-            var outOfStockProducts = await _context.Products.CountAsync(p => p.StockQuantity == 0);
-            var lowStockProducts = await _context.Products.CountAsync(p => p.StockQuantity > 0 && p.StockQuantity <= 10);
-
-            var averagePrice = await _context.Products.AverageAsync(p => p.Price);
-            var totalInventoryValue = await _context.Products.SumAsync(p => p.Price * p.StockQuantity);
-
-            var topSellingProducts = await _context.OrderItems
-                .GroupBy(oi => oi.ProductId)
-                .Select(g => new
-                {
-                    ProductId = g.Key,
-                    TotalSold = g.Sum(oi => oi.Quantity),
-                    Revenue = g.Sum(oi => oi.UnitPrice * oi.Quantity)
-                })
-                .OrderByDescending(x => x.TotalSold)
-                .Take(10)
-                .Join(_context.Products,
-                      tp => tp.ProductId,
-                      p => p.Id,
-                      (tp, p) => new
-                      {
-                          p.Id,
-                          p.Name,
-                          p.Category,
-                          TotalSold = tp.TotalSold,
-                          Revenue = tp.Revenue,
-                          CurrentStock = p.StockQuantity
-                      })
-                .ToListAsync();
-
-            var categoryStats = await _context.Products
-                .GroupBy(p => p.Category)
-                .Select(g => new
-                {
-                    Category = g.Key,
-                    ProductCount = g.Count(),
-                    AveragePrice = g.Average(p => p.Price),
-                    TotalValue = g.Sum(p => p.Price * p.StockQuantity),
-                    InStockCount = g.Count(p => p.StockQuantity > 0)
-                })
-                .OrderBy(x => x.Category)
-                .ToListAsync();
-
-            var stats = new
+            try
             {
-                TotalProducts = totalProducts,
-                InStockProducts = inStockProducts,
-                OutOfStockProducts = outOfStockProducts,
-                LowStockProducts = lowStockProducts,
-                AveragePrice = averagePrice,
-                TotalInventoryValue = totalInventoryValue,
-                TopSellingProducts = topSellingProducts,
-                CategoryStats = categoryStats
-            };
+                var totalProducts = await _context.Products.CountAsync();
+                var inStockProducts = await _context.Products.CountAsync(p => p.StockQuantity > 0);
+                var outOfStockProducts = await _context.Products.CountAsync(p => p.StockQuantity == 0);
+                var lowStockProducts = await _context.Products.CountAsync(p => p.StockQuantity <= 10 && p.StockQuantity > 0);
 
-            return stats;
+                var totalStockValue = await _context.Products
+                    .SumAsync(p => p.Price * p.StockQuantity);
+
+                var averagePrice = await _context.Products.AverageAsync(p => p.Price);
+
+                var stats = new
+                {
+                    TotalProducts = totalProducts,
+                    InStockProducts = inStockProducts,
+                    OutOfStockProducts = outOfStockProducts,
+                    LowStockProducts = lowStockProducts,
+                    TotalStockValue = totalStockValue,
+                    AveragePrice = averagePrice,
+                    StockDistribution = new
+                    {
+                        InStock = Math.Round((double)inStockProducts / totalProducts * 100, 2),
+                        OutOfStock = Math.Round((double)outOfStockProducts / totalProducts * 100, 2),
+                        LowStock = Math.Round((double)lowStockProducts / totalProducts * 100, 2)
+                    }
+                };
+
+                return Ok(new
+                {
+                    message = "Ürün istatistikleri",
+                    generatedAt = DateTime.UtcNow,
+                    stats
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting product statistics");
+                return StatusCode(500, new { message = "Ýstatistikler yüklenirken hata oluþtu" });
+            }
         }
 
-        private bool ProductExists(int id)
+        // POST: api/Products/Bulk
+        [HttpPost("Bulk")]
+        [AuthorizeRoles(UserRole.Admin)]
+        public async Task<ActionResult<object>> CreateBulkProducts([FromBody] List<CreateProductDto> productsDto)
         {
-            return _context.Products.Any(e => e.Id == id);
+            try
+            {
+                if (!productsDto.Any())
+                {
+                    return BadRequest(new { message = "En az bir ürün gönderilmelidir" });
+                }
+
+                var products = productsDto.Select(dto => new Product
+                {
+                    Name = dto.Name,
+                    Description = dto.Description,
+                    Price = dto.Price,
+                    StockQuantity = dto.StockQuantity,
+                    Category = dto.Category,
+                    ImageUrl = dto.ImageUrl,
+                    CreatedAt = DateTime.UtcNow
+                }).ToList();
+
+                _context.Products.AddRange(products);
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Bulk created {Count} products", products.Count);
+
+                return Ok(new
+                {
+                    message = $"{products.Count} ürün baþarýyla eklendi",
+                    count = products.Count,
+                    products = products.Select(p => new { p.Id, p.Name, p.Category }).ToList()
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error bulk creating products");
+                return StatusCode(500, new { message = "Toplu ürün ekleme sýrasýnda hata oluþtu" });
+            }
         }
     }
 
-    // DTO Models
-    public class UpdateStockModel
-    {
-        public int Quantity { get; set; }
-    }
-
-    public class ProductCreateDto
-    {
-        [Required] public string Name { get; set; }
-
-        public string Description { get; set; }
-
-        [Range(0, 999999)] public decimal Price { get; set; }
-        [Range(0, int.MaxValue)] public int StockQuantity { get; set; }
-        public string Category { get; set; }
-
-        // <input type="file" name="Image">
-        public IFormFile Image { get; set; }       // Optional
-    }
-
-
-    public class ProductCreateDto2
-    {
-        [Required] public string Name { get; set; }
-
-        public string Description { get; set; }
-
-        [Range(0, 999999)] public decimal Price { get; set; }
-        [Range(0, int.MaxValue)] public int StockQuantity { get; set; }
-        public string Category { get; set; }
-
-        public string? imageUrl { get; set; } // Optional URL for image
-    }
-
-    public class SimpleProductDto
+    // DTO Classes
+    public class CreateProductDto
     {
         [Required]
         [StringLength(100)]
         public string Name { get; set; }
 
-        [StringLength(1000)]
-        public string Description { get; set; } = string.Empty;
+        [Required]
+        public string Description { get; set; }
 
         [Required]
-        [Range(0.01, 999999.99)]
+        [Range(0.01, double.MaxValue)]
         public decimal Price { get; set; }
 
         [Required]
@@ -633,8 +555,30 @@ namespace webprogbackend.Controllers
         [StringLength(50)]
         public string Category { get; set; }
 
-        // URL olarak resim
         public string? ImageUrl { get; set; }
     }
 
+    public class UpdateProductDto
+    {
+        [Required]
+        [StringLength(100)]
+        public string Name { get; set; }
+
+        [Required]
+        public string Description { get; set; }
+
+        [Required]
+        [Range(0.01, double.MaxValue)]
+        public decimal Price { get; set; }
+
+        [Required]
+        [Range(0, int.MaxValue)]
+        public int StockQuantity { get; set; }
+
+        [Required]
+        [StringLength(50)]
+        public string Category { get; set; }
+
+        public string? ImageUrl { get; set; }
+    }
 }
