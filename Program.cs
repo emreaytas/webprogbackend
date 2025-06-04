@@ -100,6 +100,24 @@ builder.Services.AddHttpClient("DeepSeek", client =>
     client.DefaultRequestHeaders.Add("X-Title", deepSeekSettings.XTitle);
 });
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DefaultPolicy", builder =>
+    {
+        builder
+            .WithOrigins(
+                "http://localhost:3000",
+                "https://localhost:3000",
+                "http://localhost:5173",
+                "https://localhost:5173"
+            )
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials()
+            .SetIsOriginAllowed(origin => true); // Development için
+    });
+});
+
 // Swagger Configuration
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
