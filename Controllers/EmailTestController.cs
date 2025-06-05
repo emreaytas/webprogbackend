@@ -1,6 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using webprogbackend.Services;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 
 namespace webprogbackend.Controllers
 {
@@ -10,367 +12,251 @@ namespace webprogbackend.Controllers
     {
         private readonly IEmailService _emailService;
         private readonly ILogger<EmailTestController> _logger;
+        private readonly IConfiguration _configuration;
 
-        public EmailTestController(IEmailService emailService, ILogger<EmailTestController> logger)
+        public EmailTestController(IEmailService emailService, ILogger<EmailTestController> logger, IConfiguration configuration)
         {
             _emailService = emailService;
             _logger = logger;
+            _configuration = configuration;
         }
 
-        // Test email gönder
+        // Test email gönder - İYİLEŞTİRİLMİŞ VERSİYON
         [HttpPost("test")]
         public async Task<IActionResult> SendTestEmail([FromBody] TestEmailRequest request)
         {
+            var startTime = DateTime.Now;
+
             try
             {
+                _logger.LogInformation($"🧪 Test email isteği alındı: {request.Email}");
+
+                // 1. Email adresini doğrula
+                if (string.IsNullOrEmpty(request.Email) || !request.Email.Contains("@"))
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "Geçersiz email adresi",
+                        timestamp = DateTime.Now
+                    });
+                }
+
+         
+
+                // 3. SMTP bağlantısını test et
+                _logger.LogInformation("🔧 SMTP bağlantısı test ediliyor...");
+                var connectionTest = await _emailService.TestSmtpConnectionAsync();
+                if (!connectionTest.IsConnected)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "SMTP bağlantı hatası",
+                        details = connectionTest.Message,
+                        troubleshooting = GetTroubleshootingSteps(),
+                        timestamp = DateTime.Now
+                    });
+                }
+
+                // 4. Test email'ini gönder
+                _logger.LogInformation($"📧 Test email gönderiliyor: {request.Email}");
                 await _emailService.SendTestEmailAsync(request.Email);
 
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Test email'i {request.Email} adresine gönderildi"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Test email gönderilirken hata: {request.Email}");
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
+                var duration = DateTime.Now - startTime;
 
-        // Sipariş onay email'i test et - DÜZELTME: Otomatik sipariş verisi oluştur
-        [HttpPost("test-order-confirmation")]
-        public async Task<IActionResult> TestOrderConfirmation([FromBody] TestOrderEmailRequest request)
-        {
-            try
-            {
-                var orderNumber = "ORD-" + DateTime.Now.ToString("yyyyMMdd") + "-" + new Random().Next(1000, 9999);
-                var totalAmount = 1299.99m; // Test tutarı
-
-                await _emailService.SendOrderConfirmationAsync(
-                    request.Email,
-                    orderNumber,
-                    totalAmount
-                );
+                _logger.LogInformation($"✅ Test email başarıyla gönderildi! Süre: {duration.TotalMilliseconds}ms");
 
                 return Ok(new
                 {
                     success = true,
-                    message = $"Sipariş onay email'i {request.Email} adresine gönderildi",
-                    orderNumber = orderNumber,
-                    totalAmount = totalAmount
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Sipariş onay email'i gönderilirken hata: {request.Email}");
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
-
-        // Hoş geldin email'i test et
-        [HttpPost("test-welcome")]
-        public async Task<IActionResult> TestWelcomeEmail([FromBody] TestWelcomeEmailRequest request)
-        {
-            try
-            {
-                await _emailService.SendWelcomeEmailAsync(request.Email, request.Username);
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Hoş geldin email'i {request.Email} adresine gönderildi"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Hoş geldin email'i gönderilirken hata: {request.Email}");
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
-
-        // Şifre sıfırlama email'i test et
-        [HttpPost("test-password-reset")]
-        public async Task<IActionResult> TestPasswordReset([FromBody] TestEmailRequest request)
-        {
-            try
-            {
-                var resetLink = "https://localhost:7062/reset-password?token=test-token-123";
-                await _emailService.SendPasswordResetAsync(request.Email, resetLink);
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Şifre sıfırlama email'i {request.Email} adresine gönderildi"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Şifre sıfırlama email'i gönderilirken hata: {request.Email}");
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
-
-        // Admin bildirimi test et
-        [HttpPost("test-admin-notification")]
-        public async Task<IActionResult> TestAdminNotification([FromBody] AdminNotificationRequest request)
-        {
-            try
-            {
-                _logger.LogInformation("Admin bildirimi gönderiliyor...");
-                _logger.LogInformation($"Subject: {request.Subject}");
-                _logger.LogInformation($"Message Length: {request.Message?.Length ?? 0}");
-
-                await _emailService.SendAdminNotificationAsync(request.Subject, request.Message);
-
-                return Ok(new
-                {
-                    success = true,
-                    message = "Admin bildirimi başarıyla gönderildi",
-                    timestamp = DateTime.Now,
+                    message = $"Test email'i {request.Email} adresine başarıyla gönderildi",
                     details = new
                     {
-                        subject = request.Subject,
-                        messageLength = request.Message?.Length ?? 0
-                    }
+                        recipientEmail = request.Email,
+                        sentAt = DateTime.Now,
+                        duration = $"{duration.TotalMilliseconds:F0}ms",
+                        smtpServer = _configuration["EmailSettings:SmtpServer"],
+                        smtpPort = _configuration["EmailSettings:Port"],
+                        fromEmail = _configuration["EmailSettings:FromEmail"]
+                    },
+                    checkList = new[]
+                    {
+                        "✅ Email ayarları doğrulandı",
+                        "✅ SMTP bağlantısı test edildi",
+                        "✅ Email başarıyla gönderildi",
+                        "📧 Lütfen gelen kutusu ve spam klasörünü kontrol edin"
+                    },
+                    importantNotes = new[]
+                    {
+                        "📁 Email spam/gereksiz klasöründe olabilir",
+                        "⏱️ Email'in ulaşması 1-5 dakika sürebilir",
+                        "📱 Mobil uygulamadan da kontrol edin",
+                        "🔄 Başka bir email adresi ile de test edin"
+                    },
+                    timestamp = DateTime.Now
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Konfigürasyon hataları
+                _logger.LogError(ex, $"❌ Email konfigürasyon hatası: {request.Email}");
+
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Email konfigürasyon hatası",
+                    error = ex.Message,
+                    configurationHelp = GetConfigurationHelp(),
+                    timestamp = DateTime.Now
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Admin bildirimi gönderilirken hata");
-                return BadRequest(new
+                // Genel hatalar
+                _logger.LogError(ex, $"❌ Test email gönderilirken hata: {request.Email}");
+
+                return StatusCode(500, new
                 {
                     success = false,
-                    message = ex.Message,
+                    message = "Test email gönderilemedi",
+                    error = ex.Message,
+                    troubleshooting = GetTroubleshootingSteps(),
                     timestamp = DateTime.Now
                 });
             }
         }
 
-        // Yeni sipariş bildirimi test et
-        [HttpPost("test-new-order")]
-        public async Task<IActionResult> TestNewOrderNotification([FromBody] NewOrderNotificationRequest request)
+
+        // SMTP bağlantısını test et
+        [HttpPost("test-smtp-connection")]
+        public async Task<IActionResult> TestSmtpConnection()
         {
             try
             {
-                await _emailService.SendNewOrderNotificationAsync(request.OrderDetails);
+                _logger.LogInformation("🔧 SMTP bağlantı testi başlatılıyor...");
 
-                return Ok(new
+                var result = await _emailService.TestSmtpConnectionAsync();
+
+                if (result.IsConnected)
                 {
-                    success = true,
-                    message = "Yeni sipariş bildirimi gönderildi"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Yeni sipariş bildirimi gönderilirken hata");
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
-
-        // Email ayarlarını kontrol et
-        [HttpGet("check-settings")]
-        public IActionResult CheckEmailSettings()
-        {
-            var config = HttpContext.RequestServices.GetService<IConfiguration>();
-
-            return Ok(new
-            {
-                smtpConfigured = !string.IsNullOrEmpty(config["EmailSettings:SmtpServer"]),
-                fromEmailConfigured = !string.IsNullOrEmpty(config["EmailSettings:FromEmail"]),
-                passwordConfigured = !string.IsNullOrEmpty(config["EmailSettings:Password"]),
-                recipientConfigured = !string.IsNullOrEmpty(config["EmailSettings:DefaultRecipientEmail"]),
-                settings = new
-                {
-                    smtpServer = config["EmailSettings:SmtpServer"],
-                    port = config["EmailSettings:Port"],
-                    fromEmail = config["EmailSettings:FromEmail"],
-                    fromName = config["EmailSettings:FromName"],
-                    defaultRecipient = config["EmailSettings:DefaultRecipientEmail"]
-                },
-                message = "Email ayarları kontrol edildi",
-                timestamp = DateTime.Now
-            });
-        }
-
-        // Email bağlantısını test et
-        [HttpPost("test-connection")]
-        public async Task<IActionResult> TestEmailConnection()
-        {
-            try
-            {
-                var emailService = _emailService as EmailService;
-                if (emailService != null)
-                {
-                    var isWorking = await emailService.TestEmailConfigurationAsync();
-
-                    if (isWorking)
+                    return Ok(new
                     {
-                        return Ok(new
+                        success = true,
+                        message = "SMTP bağlantısı başarılı",
+                        details = result.Message,
+                        smtpInfo = new
                         {
-                            success = true,
-                            message = "Email bağlantısı başarılı",
-                            timestamp = DateTime.Now
-                        });
-                    }
-                    else
-                    {
-                        return BadRequest(new
-                        {
-                            success = false,
-                            message = "Email bağlantısı başarısız",
-                            timestamp = DateTime.Now
-                        });
-                    }
+                            server = _configuration["EmailSettings:SmtpServer"],
+                            port = _configuration["EmailSettings:Port"],
+                            ssl = true,
+                            authentication = true
+                        },
+                        timestamp = DateTime.Now
+                    });
                 }
-
-                return BadRequest(new
+                else
                 {
-                    success = false,
-                    message = "EmailService bulunamadı"
-                });
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "SMTP bağlantısı başarısız",
+                        error = result.Message,
+                        troubleshooting = GetSmtpTroubleshootingSteps(),
+                        timestamp = DateTime.Now
+                    });
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Email bağlantısı test edilirken hata");
-                return BadRequest(new
+                _logger.LogError(ex, "SMTP bağlantı testi sırasında hata");
+
+                return StatusCode(500, new
                 {
                     success = false,
-                    message = ex.Message
+                    message = "SMTP bağlantı testi başarısız",
+                    error = ex.Message,
+                    timestamp = DateTime.Now
                 });
             }
         }
 
-        // Gmail SMTP özel testi - DÜZELTME: Daha detaylı hata kontrolü
+        // Gmail özel testi - GELİŞTİRİLMİŞ VERSİYON
         [HttpPost("test-gmail")]
-        public async Task<IActionResult> TestGmailSmtp()
+        public async Task<IActionResult> TestGmailSmtp([FromBody] GmailTestRequest request)
         {
             try
             {
-                var config = HttpContext.RequestServices.GetService<IConfiguration>();
-                var testEmail = config["EmailSettings:DefaultRecipientEmail"] ?? "emreaytascmp@gmail.com";
+                var testEmail = request.Email ?? _configuration["EmailSettings:DefaultRecipientEmail"] ?? "test@example.com";
 
-                _logger.LogInformation($"Gmail SMTP testi başlatılıyor - Hedef: {testEmail}");
+                _logger.LogInformation($"📧 Gmail SMTP testi başlatılıyor - Hedef: {testEmail}");
+
+                // Gmail ayarlarını özel olarak kontrol et
+                var gmailCheck = CheckGmailConfiguration();
+                if (!gmailCheck.IsValid)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "Gmail konfigürasyonu hatalı",
+                        issues = gmailCheck.Issues,
+                        gmailSetupGuide = GetGmailSetupGuide(),
+                        timestamp = DateTime.Now
+                    });
+                }
 
                 await _emailService.SendTestEmailAsync(testEmail);
 
-                _logger.LogInformation("Gmail SMTP testi başarılı");
+                _logger.LogInformation("✅ Gmail SMTP testi başarılı");
 
                 return Ok(new
                 {
                     success = true,
                     message = $"Gmail SMTP testi başarılı - {testEmail} adresine gönderildi",
-                    info = new
+                    gmailInfo = new
                     {
                         smtp = "smtp.gmail.com:587",
                         ssl = true,
+                        appPasswordUsed = CheckIfAppPasswordFormat(_configuration["EmailSettings:Password"]),
                         testTime = DateTime.Now,
                         targetEmail = testEmail
-                    }
+                    },
+                    importantReminders = new[]
+                    {
+                        "✅ 2-Step Verification aktif olmalı",
+                        "🔑 App Password kullanılmalı (normal şifre değil)",
+                        "📱 16 haneli App Password doğru girilmeli",
+                        "📁 Spam klasörünü kontrol etmeyi unutmayın"
+                    },
+                    timestamp = DateTime.Now
                 });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Gmail SMTP testi başarısız");
 
-                // Gmail spesifik hata mesajları
-                var troubleshootingSteps = new List<string>
-                {
-                    "1. Gmail hesabında 2-Step Verification açık olmalı",
-                    "2. App Password oluşturulmalı (normal şifre değil)",
-                    "3. Less secure app access kapatılmalı",
-                    "4. Gmail hesabı engellenmiş olabilir",
-                    "5. SMTP ayarları: smtp.gmail.com:587, SSL=true"
-                };
-
-                // Hata türüne göre özel öneriler ekle
-                if (ex.Message.Contains("Authentication"))
-                {
-                    troubleshootingSteps.Add("6. App Password doğru mu? 16 karakterli olmalı");
-                    troubleshootingSteps.Add("7. Email adresi doğru mu?");
-                }
-                else if (ex.Message.Contains("timeout") || ex.Message.Contains("connection"))
-                {
-                    troubleshootingSteps.Add("6. İnternet bağlantısı kontrol edin");
-                    troubleshootingSteps.Add("7. Firewall SMTP trafiğini engelliyor olabilir");
-                }
-
                 return BadRequest(new
                 {
                     success = false,
                     message = "Gmail SMTP testi başarısız: " + ex.Message,
-                    troubleshooting = troubleshootingSteps,
+                    gmailTroubleshooting = GetGmailTroubleshootingSteps(),
+                    commonSolutions = new[]
+                    {
+                        "🔑 App Password oluşturun: https://myaccount.google.com/apppasswords",
+                        "🛡️ 2-Step Verification açın: https://myaccount.google.com/security",
+                        "📧 Email adresini doğru yazdığınızdan emin olun",
+                        "🔄 Farklı bir Gmail hesabı ile test edin",
+                        "⏱️ Birkaç dakika bekleyip tekrar deneyin"
+                    },
                     timestamp = DateTime.Now,
                     errorType = ex.GetType().Name
                 });
             }
         }
 
-        // Toplu email gönderme testi
-        [HttpPost("test-bulk")]
-        public async Task<IActionResult> TestBulkEmail([FromBody] BulkEmailTestRequest request)
-        {
-            try
-            {
-                var results = new List<object>();
+        
 
-                foreach (var email in request.Emails)
-                {
-                    try
-                    {
-                        await _emailService.SendTestEmailAsync(email);
-                        results.Add(new { email = email, success = true, message = "Başarılı" });
-                    }
-                    catch (Exception ex)
-                    {
-                        results.Add(new { email = email, success = false, message = ex.Message });
-                    }
-                }
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"{request.Emails.Count} email test edildi",
-                    results = results,
-                    summary = new
-                    {
-                        total = request.Emails.Count,
-                        successful = results.Count(r => ((dynamic)r).success),
-                        failed = results.Count(r => !((dynamic)r).success)
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
-
-        // Email formatı test et
+        // Test email formatı
         [HttpPost("test-format")]
         public async Task<IActionResult> TestEmailFormat([FromBody] EmailFormatTestRequest request)
         {
@@ -387,85 +273,202 @@ namespace webprogbackend.Controllers
                     message = "Email format testi gönderildi",
                     features = new[]
                     {
-                        "HTML5 desteği",
-                        "CSS3 stilleri",
-                        "Emoji karakterleri",
-                        "Responsive tasarım",
-                        "Gradient arka planlar"
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = ex.Message
-                });
-            }
-        }
-
-        // YENI: Sipariş tamamlandığında çağrılacak endpoint
-        [HttpPost("send-order-emails")]
-        [Authorize]
-        public async Task<IActionResult> SendOrderEmails([FromBody] OrderEmailRequest request)
-        {
-            try
-            {
-                var results = new List<object>();
-
-                // Müşteri onay e-postası gönder
-                try
-                {
-                    await _emailService.SendOrderConfirmationAsync(
-                        request.CustomerEmail,
-                        request.OrderNumber,
-                        request.TotalAmount
-                    );
-                    results.Add(new { type = "customer", success = true, message = "Müşteri onay e-postası gönderildi" });
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Müşteri onay e-postası gönderilemedi");
-                    results.Add(new { type = "customer", success = false, message = ex.Message });
-                }
-
-                // Admin bildirim e-postası gönder
-                try
-                {
-                    var adminNotification = CreateOrderNotificationContent(request);
-                    await _emailService.SendNewOrderNotificationAsync(adminNotification);
-                    results.Add(new { type = "admin", success = true, message = "Admin bildirim e-postası gönderildi" });
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Admin bildirim e-postası gönderilemedi");
-                    results.Add(new { type = "admin", success = false, message = ex.Message });
-                }
-
-                var successCount = results.Count(r => ((dynamic)r).success);
-                var totalCount = results.Count;
-
-                return Ok(new
-                {
-                    success = successCount > 0,
-                    message = $"{successCount}/{totalCount} e-posta başarıyla gönderildi",
-                    results = results,
+                        "📱 Responsive tasarım",
+                        "🎨 Modern CSS3 stilleri",
+                        "😀 Emoji desteği",
+                        "🌈 Gradient arka planlar",
+                        "📊 HTML tablolar"
+                    },
                     timestamp = DateTime.Now
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Sipariş e-postaları gönderilirken genel hata");
                 return BadRequest(new
                 {
                     success = false,
-                    message = ex.Message
+                    message = ex.Message,
+                    timestamp = DateTime.Now
                 });
             }
         }
 
-        #region Private Helper Methods
+
+
+
+        private (bool IsValid, List<string> Issues) CheckGmailConfiguration()
+        {
+            var issues = new List<string>();
+            var isValid = true;
+
+            var fromEmail = _configuration["EmailSettings:FromEmail"];
+            var smtpServer = _configuration["EmailSettings:SmtpServer"];
+            var smtpPort = _configuration["EmailSettings:Port"];
+            var password = _configuration["EmailSettings:Password"];
+
+            if (!string.IsNullOrEmpty(fromEmail) && fromEmail.EndsWith("@gmail.com"))
+            {
+                if (smtpServer != "smtp.gmail.com")
+                {
+                    issues.Add("❌ Gmail için SMTP server 'smtp.gmail.com' olmalı");
+                    isValid = false;
+                }
+
+                if (smtpPort != "587")
+                {
+                    issues.Add("⚠️ Gmail için port '587' önerilir");
+                }
+
+                if (!string.IsNullOrEmpty(password))
+                {
+                    if (password.Length != 16 || password.Contains(" "))
+                    {
+                        issues.Add("⚠️ Gmail App Password 16 haneli olmalı (boşluk olmadan)");
+                    }
+                }
+                else
+                {
+                    issues.Add("❌ Gmail App Password gerekli");
+                    isValid = false;
+                }
+            }
+
+            return (isValid, issues);
+        }
+
+        private (bool IsConnected, string Message) CheckNetworkConnectivity()
+        {
+            try
+            {
+                using var ping = new Ping();
+                var reply = ping.Send("8.8.8.8", 5000); // Google DNS
+
+                if (reply.Status == IPStatus.Success)
+                {
+                    return (true, "İnternet bağlantısı aktif");
+                }
+                else
+                {
+                    return (false, $"İnternet bağlantısı sorunu: {reply.Status}");
+                }
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Ağ kontrolü başarısız: {ex.Message}");
+            }
+        }
+
+        private bool CheckIfAppPasswordFormat(string password)
+        {
+            if (string.IsNullOrEmpty(password)) return false;
+            return password.Length == 16 && !password.Contains(" ");
+        }
+
+        private List<string> GetTroubleshootingSteps()
+        {
+            return new List<string>
+            {
+                "1. appsettings.json dosyasında EmailSettings bölümünü kontrol edin",
+                "2. SMTP server ve port ayarlarını doğrulayın",
+                "3. Email adresi ve şifrenin doğru olduğundan emin olun",
+                "4. Gmail kullanıyorsanız App Password oluşturun",
+                "5. İnternet bağlantınızı kontrol edin",
+                "6. Firewall ayarlarını kontrol edin (port 587)",
+                "7. Antivirus yazılımının email trafiğini engellemediğinden emin olun"
+            };
+        }
+
+        private List<string> GetSmtpTroubleshootingSteps()
+        {
+            return new List<string>
+            {
+                "🔧 SMTP server adresini kontrol edin",
+                "🔌 Port numarasını doğrulayın (genellikle 587 veya 465)",
+                "🔐 SSL/TLS ayarlarını kontrol edin",
+                "👤 Kullanıcı adı ve şifrenin doğru olduğundan emin olun",
+                "🌐 İnternet bağlantınızı test edin",
+                "🛡️ Firewall'ın SMTP trafiğini engellememesini sağlayın"
+            };
+        }
+
+        private List<string> GetGmailTroubleshootingSteps()
+        {
+            return new List<string>
+            {
+                "🔑 App Password oluşturun: https://myaccount.google.com/apppasswords",
+                "🛡️ 2-Step Verification'ı açın: https://myaccount.google.com/security",
+                "📧 Normal şifre değil, App Password kullanın",
+                "✏️ App Password'u boşluk olmadan 16 hane olarak girin",
+                "🚫 'Less secure app access'i KAPATIN",
+                "⏱️ Gmail hesabı geçici bloklanmışsa birkaç saat bekleyin",
+                "📱 Gmail mobil uygulamasından giriş yapabildiğinizi test edin"
+            };
+        }
+
+        private List<string> GetConfigurationHelp()
+        {
+            return new List<string>
+            {
+                "appsettings.json dosyasına EmailSettings bölümü ekleyin:",
+                "\"EmailSettings\": {",
+                "  \"SmtpServer\": \"smtp.gmail.com\",",
+                "  \"Port\": \"587\",",
+                "  \"FromEmail\": \"your-email@gmail.com\",",
+                "  \"Password\": \"your-16-digit-app-password\",",
+                "  \"FromName\": \"Your Name\",",
+                "  \"DefaultRecipientEmail\": \"admin@yoursite.com\"",
+                "}"
+            };
+        }
+
+        private List<string> GetGmailSetupGuide()
+        {
+            return new List<string>
+            {
+                "1. Gmail hesabınızda 2-Step Verification açın",
+                "2. https://myaccount.google.com/apppasswords adresine gidin",
+                "3. 'Mail' seçin ve App Password oluşturun",
+                "4. Oluşturulan 16 haneli kodu appsettings.json'a ekleyin",
+                "5. SMTP ayarları: smtp.gmail.com:587, SSL=true"
+            };
+        }
+
+        private List<string> GetEmailRecommendations()
+        {
+            var fromEmail = _configuration["EmailSettings:FromEmail"];
+            var recommendations = new List<string>();
+
+            if (string.IsNullOrEmpty(fromEmail))
+            {
+                recommendations.Add("📧 From Email adresi belirleyin");
+            }
+            else if (fromEmail.EndsWith("@gmail.com"))
+            {
+                recommendations.Add("🔑 Gmail için App Password kullanın");
+                recommendations.Add("🛡️ 2-Step Verification açık olmalı");
+            }
+            else if (fromEmail.EndsWith("@outlook.com") || fromEmail.EndsWith("@hotmail.com"))
+            {
+                recommendations.Add("🔐 Outlook için App Password gerekebilir");
+            }
+
+            recommendations.Add("🧪 Test email göndererek sistem çalışmasını doğrulayın");
+            recommendations.Add("📁 Spam klasörünü kontrol etmeyi unutmayın");
+
+            return recommendations;
+        }
+
+        private List<string> GetSystemRecommendations()
+        {
+            return new List<string>
+            {
+                "✅ Tüm kontroller geçtikten sonra test email gönderin",
+                "📧 Farklı email adreslerine test gönderin",
+                "⏱️ Email ulaşma sürelerini gözlemleyin",
+                "📁 Spam filtrelerinin çalışmasını test edin",
+                "🔄 Düzenli olarak sistem kontrolü yapın"
+            };
+        }
 
         private string CreateFormattedTestEmail(string testType, string email)
         {
@@ -505,83 +508,22 @@ namespace webprogbackend.Controllers
                 </div>";
         }
 
-        private string CreateOrderNotificationContent(OrderEmailRequest request)
-        {
-            return $@"
-                <h3>📋 Sipariş Bilgileri</h3>
-                <p><strong>Sipariş Numarası:</strong> {request.OrderNumber}</p>
-                <p><strong>Müşteri:</strong> {request.CustomerName}</p>
-                <p><strong>E-posta:</strong> {request.CustomerEmail}</p>
-                <p><strong>Telefon:</strong> {request.CustomerPhone}</p>
-                <p><strong>Toplam Tutar:</strong> {request.TotalAmount:C}</p>
-                <p><strong>Adres:</strong> {request.ShippingAddress}</p>
-                <p><strong>Sipariş Tarihi:</strong> {DateTime.Now:dd.MM.yyyy HH:mm}</p>
-                
-                <h3>🛍️ Ürün Detayları</h3>
-                <p>Ürün sayısı: {request.ItemCount}</p>
-                <p>Detaylar sipariş yönetim panelinde görüntülenebilir.</p>";
-        }
 
-        #endregion
-
-        // DTO Sınıfları
+        // DTO Classes
         public class TestEmailRequest
         {
             public string Email { get; set; } = string.Empty;
         }
 
-        public class TestOrderEmailRequest
+        public class GmailTestRequest
         {
-            public string Email { get; set; } = string.Empty;
-        }
-
-        public class TestWelcomeEmailRequest
-        {
-            public string Email { get; set; } = string.Empty;
-            public string Username { get; set; } = string.Empty;
-        }
-
-        public class AdminNotificationRequest
-        {
-            public string Subject { get; set; } = string.Empty;
-            public string Message { get; set; } = string.Empty;
-        }
-
-        public class NewOrderNotificationRequest
-        {
-            public string OrderDetails { get; set; } = string.Empty;
-        }
-
-        public class BulkEmailTestRequest
-        {
-            public List<string> Emails { get; set; } = new List<string>();
+            public string? Email { get; set; }
         }
 
         public class EmailFormatTestRequest
         {
             public string Email { get; set; } = string.Empty;
             public string TestType { get; set; } = "Format Test";
-        }
-
-        // YENI: Sipariş e-posta gönderimi için DTO
-        public class OrderEmailRequest
-        {
-            public string OrderNumber { get; set; } = string.Empty;
-            public string CustomerName { get; set; } = string.Empty;
-            public string CustomerEmail { get; set; } = string.Empty;
-            public string CustomerPhone { get; set; } = string.Empty;
-            public string ShippingAddress { get; set; } = string.Empty;
-            public decimal TotalAmount { get; set; }
-            public int ItemCount { get; set; }
-            public List<OrderItemDto> Items { get; set; } = new List<OrderItemDto>();
-        }
-
-        public class OrderItemDto
-        {
-            public string ProductName { get; set; } = string.Empty;
-            public int Quantity { get; set; }
-            public decimal UnitPrice { get; set; }
-            public decimal TotalPrice { get; set; }
         }
     }
 }
