@@ -42,8 +42,6 @@ namespace webprogbackend.Controllers
                     });
                 }
 
-         
-
                 // 3. SMTP bağlantısını test et
                 _logger.LogInformation("🔧 SMTP bağlantısı test ediliyor...");
                 var connectionTest = await _emailService.TestSmtpConnectionAsync();
@@ -127,6 +125,87 @@ namespace webprogbackend.Controllers
             }
         }
 
+        // YENİ ENDPOINT - Sipariş E-postalarını Gönder
+        [HttpPost("send-order-emails")]
+        public async Task<IActionResult> SendOrderEmails([FromBody] OrderEmailRequest request)
+        {
+            try
+            {
+                _logger.LogInformation($"📧 Sipariş e-postaları gönderiliyor - Sipariş: {request.OrderNumber}");
+                _logger.LogInformation($"📧 Müşteri: {request.CustomerName} ({request.CustomerEmail})");
+                _logger.LogInformation($"📧 Toplam Tutar: {request.TotalAmount:C}");
+
+                var customerEmailSent = false;
+                var adminEmailSent = false;
+                var errors = new List<string>();
+
+                // 1. Müşteri onay e-postası gönder
+                try
+                {
+                    await _emailService.SendOrderConfirmationAsync(
+                        request.CustomerEmail,
+                        request.OrderNumber,
+                        request.TotalAmount
+                    );
+                    customerEmailSent = true;
+                    _logger.LogInformation($"✅ Müşteri onay e-postası gönderildi: {request.CustomerEmail}");
+                }
+                catch (Exception ex)
+                {
+                    var error = $"Müşteri e-postası gönderilemedi: {ex.Message}";
+                    errors.Add(error);
+                    _logger.LogError(ex, error);
+                }
+
+                // 2. Admin bilgilendirme e-postası gönder
+                try
+                {
+                    var orderDetailsHtml = CreateOrderDetailsHtml(request);
+                    await _emailService.SendNewOrderNotificationAsync(orderDetailsHtml);
+                    adminEmailSent = true;
+                    _logger.LogInformation("✅ Admin bilgilendirme e-postası gönderildi");
+                }
+                catch (Exception ex)
+                {
+                    var error = $"Admin e-postası gönderilemedi: {ex.Message}";
+                    errors.Add(error);
+                    _logger.LogError(ex, error);
+                }
+
+                // 3. Sonucu döndür
+                var success = customerEmailSent && adminEmailSent;
+
+                return Ok(new
+                {
+                    success = success,
+                    message = success
+                        ? "Tüm e-postalar başarıyla gönderildi"
+                        : "Bazı e-postalar gönderilemedi",
+                    details = new
+                    {
+                        customerEmailSent = customerEmailSent,
+                        adminEmailSent = adminEmailSent,
+                        orderNumber = request.OrderNumber,
+                        customerEmail = request.CustomerEmail,
+                        totalAmount = request.TotalAmount,
+                        sentAt = DateTime.Now
+                    },
+                    errors = errors,
+                    timestamp = DateTime.Now
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Sipariş e-postaları gönderme genel hatası");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "E-posta gönderme servisi hatası",
+                    error = ex.Message,
+                    timestamp = DateTime.Now
+                });
+            }
+        }
 
         // SMTP bağlantısını test et
         [HttpPost("test-smtp-connection")]
@@ -254,8 +333,6 @@ namespace webprogbackend.Controllers
             }
         }
 
-        
-
         // Test email formatı
         [HttpPost("test-format")]
         public async Task<IActionResult> TestEmailFormat([FromBody] EmailFormatTestRequest request)
@@ -293,8 +370,65 @@ namespace webprogbackend.Controllers
             }
         }
 
+        // Private Helper Methods
+        private string CreateOrderDetailsHtml(OrderEmailRequest request)
+        {
+            var itemsHtml = string.Join("", request.Items.Select(item => $@"
+                <tr>
+                    <td style='padding: 10px; border-bottom: 1px solid #ddd;'>{item.ProductName}</td>
+                    <td style='padding: 10px; border-bottom: 1px solid #ddd; text-align: center;'>{item.Quantity}</td>
+                    <td style='padding: 10px; border-bottom: 1px solid #ddd; text-align: right;'>{item.UnitPrice:C}</td>
+                    <td style='padding: 10px; border-bottom: 1px solid #ddd; text-align: right;'>{item.TotalPrice:C}</td>
+                </tr>
+            "));
 
-
+            return $@"
+                <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;'>
+                    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 15px; color: white; text-align: center; margin-bottom: 20px;'>
+                        <h1 style='margin: 0; font-size: 28px;'>🛒 Yeni Sipariş Alındı!</h1>
+                        <p style='margin: 10px 0 0 0; font-size: 16px;'>Sipariş Numarası: {request.OrderNumber}</p>
+                    </div>
+                    
+                    <div style='background-color: #f8f9fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #28a745;'>
+                        <h3 style='margin: 0 0 15px 0; color: #155724;'>👤 Müşteri Bilgileri</h3>
+                        <p style='margin: 5px 0;'><strong>Ad Soyad:</strong> {request.CustomerName}</p>
+                        <p style='margin: 5px 0;'><strong>E-posta:</strong> {request.CustomerEmail}</p>
+                        <p style='margin: 5px 0;'><strong>Telefon:</strong> {request.CustomerPhone}</p>
+                        <p style='margin: 5px 0;'><strong>Adres:</strong> {request.ShippingAddress}</p>
+                    </div>
+                    
+                    <div style='background-color: #e7f3ff; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #0066cc;'>
+                        <h3 style='margin: 0 0 15px 0; color: #004080;'>📦 Sipariş Detayları</h3>
+                        <table style='width: 100%; border-collapse: collapse;'>
+                            <thead>
+                                <tr style='background-color: #f8f9fa;'>
+                                    <th style='padding: 10px; text-align: left; border-bottom: 2px solid #ddd;'>Ürün</th>
+                                    <th style='padding: 10px; text-align: center; border-bottom: 2px solid #ddd;'>Adet</th>
+                                    <th style='padding: 10px; text-align: right; border-bottom: 2px solid #ddd;'>Birim Fiyat</th>
+                                    <th style='padding: 10px; text-align: right; border-bottom: 2px solid #ddd;'>Toplam</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {itemsHtml}
+                            </tbody>
+                            <tfoot>
+                                <tr style='background-color: #e8f5e8; font-weight: bold;'>
+                                    <td colspan='3' style='padding: 15px; text-align: right; border-top: 2px solid #28a745;'>Genel Toplam:</td>
+                                    <td style='padding: 15px; text-align: right; border-top: 2px solid #28a745; color: #28a745; font-size: 18px;'>{request.TotalAmount:C}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    
+                    <div style='text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 8px; margin-top: 20px;'>
+                        <p style='margin: 0; color: #6c757d; font-size: 14px;'>
+                            📅 Sipariş Tarihi: {DateTime.Now:dd.MM.yyyy HH:mm:ss}<br>
+                            💻 <strong>E-Commerce Admin Sistemi</strong><br>
+                            🔔 Bu bir otomatik bildirimdir
+                        </p>
+                    </div>
+                </div>";
+        }
 
         private (bool IsValid, List<string> Issues) CheckGmailConfiguration()
         {
@@ -334,28 +468,6 @@ namespace webprogbackend.Controllers
             }
 
             return (isValid, issues);
-        }
-
-        private (bool IsConnected, string Message) CheckNetworkConnectivity()
-        {
-            try
-            {
-                using var ping = new Ping();
-                var reply = ping.Send("8.8.8.8", 5000); // Google DNS
-
-                if (reply.Status == IPStatus.Success)
-                {
-                    return (true, "İnternet bağlantısı aktif");
-                }
-                else
-                {
-                    return (false, $"İnternet bağlantısı sorunu: {reply.Status}");
-                }
-            }
-            catch (Exception ex)
-            {
-                return (false, $"Ağ kontrolü başarısız: {ex.Message}");
-            }
         }
 
         private bool CheckIfAppPasswordFormat(string password)
@@ -433,43 +545,6 @@ namespace webprogbackend.Controllers
             };
         }
 
-        private List<string> GetEmailRecommendations()
-        {
-            var fromEmail = _configuration["EmailSettings:FromEmail"];
-            var recommendations = new List<string>();
-
-            if (string.IsNullOrEmpty(fromEmail))
-            {
-                recommendations.Add("📧 From Email adresi belirleyin");
-            }
-            else if (fromEmail.EndsWith("@gmail.com"))
-            {
-                recommendations.Add("🔑 Gmail için App Password kullanın");
-                recommendations.Add("🛡️ 2-Step Verification açık olmalı");
-            }
-            else if (fromEmail.EndsWith("@outlook.com") || fromEmail.EndsWith("@hotmail.com"))
-            {
-                recommendations.Add("🔐 Outlook için App Password gerekebilir");
-            }
-
-            recommendations.Add("🧪 Test email göndererek sistem çalışmasını doğrulayın");
-            recommendations.Add("📁 Spam klasörünü kontrol etmeyi unutmayın");
-
-            return recommendations;
-        }
-
-        private List<string> GetSystemRecommendations()
-        {
-            return new List<string>
-            {
-                "✅ Tüm kontroller geçtikten sonra test email gönderin",
-                "📧 Farklı email adreslerine test gönderin",
-                "⏱️ Email ulaşma sürelerini gözlemleyin",
-                "📁 Spam filtrelerinin çalışmasını test edin",
-                "🔄 Düzenli olarak sistem kontrolü yapın"
-            };
-        }
-
         private string CreateFormattedTestEmail(string testType, string email)
         {
             return $@"
@@ -508,7 +583,6 @@ namespace webprogbackend.Controllers
                 </div>";
         }
 
-
         // DTO Classes
         public class TestEmailRequest
         {
@@ -524,6 +598,27 @@ namespace webprogbackend.Controllers
         {
             public string Email { get; set; } = string.Empty;
             public string TestType { get; set; } = "Format Test";
+        }
+
+        public class OrderEmailRequest
+        {
+            public string OrderNumber { get; set; } = string.Empty;
+            public string CustomerName { get; set; } = string.Empty;
+            public string CustomerEmail { get; set; } = string.Empty;
+            public string CustomerPhone { get; set; } = string.Empty;
+            public string ShippingAddress { get; set; } = string.Empty;
+            public decimal TotalAmount { get; set; }
+            public int ItemCount { get; set; }
+            public List<OrderEmailItem> Items { get; set; } = new();
+        }
+
+        public class OrderEmailItem
+        {
+            public int ProductId { get; set; }
+            public string ProductName { get; set; } = string.Empty;
+            public int Quantity { get; set; }
+            public decimal UnitPrice { get; set; }
+            public decimal TotalPrice { get; set; }
         }
     }
 }
