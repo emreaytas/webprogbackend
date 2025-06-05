@@ -262,16 +262,7 @@ namespace webprogbackend.Services
             ImageUrl = "https://images.unsplash.com/photo-1597872200969-2b65d56bd16b?w=500&auto=format&fit=crop&q=60",
             CreatedAt = DateTime.UtcNow
         },
-        new Product
-        {
-            Name = "SanDisk Extreme Pro Portable SSD 4TB",
-            Description = "SanDisk Extreme Pro Portable SSD 4TB. USB-C 3.2 Gen 2x2, 2000MB/s aktarım hızı.",
-            Price = 12999.99m,
-            StockQuantity = 31,
-            Category = "Depolama",
-            ImageUrl = "https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=500&auto=format&fit=crop&q=60",
-            CreatedAt = DateTime.UtcNow
-        },
+    
         new Product
         {
             Name = "Logitech MX Master 3S",
@@ -432,26 +423,8 @@ namespace webprogbackend.Services
             ImageUrl = "https://images.unsplash.com/photo-1595044426077-d36d9236d54a?w=500&auto=format&fit=crop&q=60",
             CreatedAt = DateTime.UtcNow
         },
-        new Product
-        {
-            Name = "Anker PowerCore 26800",
-            Description = "Anker PowerCore 26800 Taşınabilir Şarj Cihazı. 26800mAh kapasite, 3 port, hızlı şarj.",
-            Price = 1899.99m,
-            StockQuantity = 89,
-            Category = "Depolama",
-            ImageUrl = "https://images.unsplash.com/photo-1609592876280-cd4241e1e8f8?w=500&auto=format&fit=crop&q=60",
-            CreatedAt = DateTime.UtcNow
-        },
-        new Product
-        {
-            Name = "Western Digital My Passport 5TB",
-            Description = "WD My Passport 5TB Taşınabilir Hard Drive. USB 3.2, hardware şifreleme, otomatik yedekleme.",
-            Price = 3499.99m,
-            StockQuantity = 41,
-            Category = "Depolama",
-            ImageUrl = "https://images.unsplash.com/photo-1564439206983-8f8abfc6c04c?w=500&auto=format&fit=crop&q=60",
-            CreatedAt = DateTime.UtcNow
-        },
+   
+     
         new Product
         {
             Name = "Samsung 980 PRO 2TB NVMe SSD",

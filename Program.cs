@@ -211,28 +211,36 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Database seeding
 using (var scope = app.Services.CreateScope())
 {
     try
     {
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var seeder = scope.ServiceProvider.GetRequiredService<IDatabaseSeeder>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-        // Ensure database is created
-        await context.Database.EnsureCreatedAsync();
+        logger.LogInformation("Starting database initialization...");
 
-        // Run seeder
+        // Database'i oluþtur/migrate et
+        await context.Database.MigrateAsync();
+        logger.LogInformation("Database migrations completed successfully");
+
+        // Seed iþlemini çalýþtýr
         await seeder.SeedAsync();
-
-        Console.WriteLine("Database seeding completed successfully.");
+        logger.LogInformation("Database seeding completed successfully");
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"Database seeding failed: {ex.Message}");
-        // Seeding hatasý uygulamayý durdurmasýn, sadece logla
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while initializing the database");
+        // Development ortamýnda hatayý fýrlat, production'da devam et
+        if (app.Environment.IsDevelopment())
+        {
+            throw;
+        }
     }
 }
+
 
 app.Run();
 
