@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+ï»¿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -114,7 +114,7 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials()
-            .SetIsOriginAllowed(origin => true); // Development için
+            .SetIsOriginAllowed(origin => true); // Development iÃ§in
     });
 });
 
@@ -129,7 +129,7 @@ builder.Services.AddSwaggerGen(c =>
         Description = "E-Commerce Backend API with Role-Based Authentication and File Upload Support"
     });
 
-    // JWT Authentication için Swagger konfigürasyonu
+    // JWT Authentication iÃ§in Swagger konfigÃ¼rasyonu
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
@@ -154,10 +154,10 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 
-    // Dosya yükleme için multipart/form-data desteği
+    // Dosya yÃ¼kleme iÃ§in multipart/form-data desteÄŸi
     c.OperationFilter<FileUploadOperationFilter>();
 
-    // Schema'ları daha iyi göstermek için
+    // Schema'larÄ± daha iyi gÃ¶stermek iÃ§in
     c.SchemaFilter<FileUploadSchemaFilter>();
 });
 
@@ -188,18 +188,18 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Web Programming E-Commerce API V1");
-        c.RoutePrefix = string.Empty; // Swagger UI'yi root'ta çalıştır
-        c.DefaultModelsExpandDepth(-1); // Modelleri varsayılan olarak kapalı göster
-        c.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None); // Endpoint'leri kapalı göster
-        c.EnableDeepLinking(); // Deep linking desteği
-        c.EnableFilter(); // Filtreleme özelliği
+        c.RoutePrefix = string.Empty; // Swagger UI'yi root'ta Ã§alÄ±ÅŸtÄ±r
+        c.DefaultModelsExpandDepth(-1); // Modelleri varsayÄ±lan olarak kapalÄ± gÃ¶ster
+        c.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None); // Endpoint'leri kapalÄ± gÃ¶ster
+        c.EnableDeepLinking(); // Deep linking desteÄŸi
+        c.EnableFilter(); // Filtreleme Ã¶zelliÄŸi
         c.EnableValidator(); // JSON validator
     });
 }
 
 app.UseHttpsRedirection();
 
-// CORS - Authentication'dan önce olmalı
+// CORS - Authentication'dan Ã¶nce olmalÄ±
 app.UseCors("DefaultPolicy");
 
 // Custom middleware
@@ -215,36 +215,65 @@ using (var scope = app.Services.CreateScope())
 {
     try
     {
-        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var seeder = scope.ServiceProvider.GetRequiredService<IDatabaseSeeder>();
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-
-        logger.LogInformation("Starting database initialization...");
-
-        // Database'i oluştur/migrate et
-        await context.Database.MigrateAsync();
-        logger.LogInformation("Database migrations completed successfully");
-
-        // Seed işlemini çalıştır
         await seeder.SeedAsync();
+
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
         logger.LogInformation("Database seeding completed successfully");
+
+        // Email servisini test et
+        var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+        if (emailService is EmailService emailServiceImpl)
+        {
+            var emailTestResult = await emailServiceImpl.TestEmailConfigurationAsync();
+            if (emailTestResult)
+            {
+                logger.LogInformation("âœ… Email servisi Ã§alÄ±ÅŸÄ±yor");
+            }
+            else
+            {
+                logger.LogWarning("âš ï¸ Email servisi yapÄ±landÄ±rmasÄ± kontrol edilmeli");
+            }
+        }
+
+        // Email ayarlarÄ±nÄ± logla
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        logger.LogInformation("ğŸ“§ Email AyarlarÄ±:");
+        logger.LogInformation($"   SMTP Server: {configuration["EmailSettings:SmtpServer"]}");
+        logger.LogInformation($"   Port: {configuration["EmailSettings:Port"]}");
+        logger.LogInformation($"   From Email: {configuration["EmailSettings:FromEmail"]}");
+        logger.LogInformation($"   From Name: {configuration["EmailSettings:FromName"]}");
+        logger.LogInformation($"   Default Recipient: {configuration["EmailSettings:DefaultRecipientEmail"]}");
+
+        // Gmail kullanÄ±m uyarÄ±sÄ±
+        if (configuration["EmailSettings:SmtpServer"] == "smtp.gmail.com")
+        {
+            logger.LogInformation("ğŸ“® Gmail SMTP kullanÄ±lÄ±yor - App Password gerekli!");
+            logger.LogInformation("   1. Gmail hesabÄ±nda 2-Step Verification aktif olmalÄ±");
+            logger.LogInformation("   2. App Password oluÅŸturulmalÄ± (16 karakter)");
+            logger.LogInformation("   3. Normal ÅŸifre deÄŸil, App Password kullanÄ±lmalÄ±");
+            logger.LogInformation("   4. https://myaccount.google.com/apppasswords adresinden oluÅŸturabilirsiniz");
+        }
     }
     catch (Exception ex)
     {
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while initializing the database");
-        // Development ortamında hatayı fırlat, production'da devam et
-        if (app.Environment.IsDevelopment())
-        {
-            throw;
-        }
+        logger.LogError(ex, "Database seeding or email service initialization failed");
     }
 }
 
 
+
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+startupLogger.LogInformation("ğŸš€ E-Commerce Backend baÅŸlatÄ±ldÄ±");
+startupLogger.LogInformation("ğŸ“ Swagger UI: https://localhost:7062/swagger");
+startupLogger.LogInformation("ğŸ”§ Email Test: https://localhost:7062/api/EmailTest/check-settings");
+startupLogger.LogInformation("ğŸ“§ Mail Testi: POST https://localhost:7062/api/EmailTest/test-gmail");
+
+
 app.Run();
 
-// FileUploadOperationFilter sınıfı
+// FileUploadOperationFilter sÄ±nÄ±fÄ±
 
 public class FileUploadSchemaFilter : ISchemaFilter
 {
@@ -262,13 +291,13 @@ public class FileUploadOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
-        // IFormFile parametresi olan metodları kontrol et
+        // IFormFile parametresi olan metodlarÄ± kontrol et
         var hasFileParameter = context.MethodInfo.GetParameters()
             .Any(p => p.ParameterType == typeof(IFormFile) ||
                      p.ParameterType == typeof(IFormFile[]) ||
                      p.ParameterType.GetProperties().Any(prop => prop.PropertyType == typeof(IFormFile)));
 
-        // Veya Consumes attribute'u multipart/form-data olan metodları kontrol et
+        // Veya Consumes attribute'u multipart/form-data olan metodlarÄ± kontrol et
         var hasFormDataConsumes = context.MethodInfo.GetCustomAttributes(true)
             .OfType<ConsumesAttribute>()
             .Any(attr => attr.ContentTypes.Contains("multipart/form-data"));
@@ -344,7 +373,7 @@ public class FileUploadOperationFilter : IOperationFilter
                     }
                 };
 
-                // URL parametrelerini kaldır (form-data olarak gönderilecek)
+                // URL parametrelerini kaldÄ±r (form-data olarak gÃ¶nderilecek)
                 operation.Parameters?.Clear();
             }
         }

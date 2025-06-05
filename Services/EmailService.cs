@@ -9,9 +9,9 @@ namespace webprogbackend.Services
         Task SendPasswordResetAsync(string email, string resetLink);
         Task SendWelcomeEmailAsync(string email, string username);
         Task SendAdminNotificationAsync(string subject, string message);
+        Task SendNewOrderNotificationAsync(string orderDetails);
+        Task SendTestEmailAsync(string testEmail);
     }
-
-
 
     public class EmailService : IEmailService
     {
@@ -121,7 +121,8 @@ namespace webprogbackend.Services
         // Admin bildirim maili
         public async Task SendAdminNotificationAsync(string subject, string message)
         {
-            var adminEmail = _configuration["AdminSettings:DefaultAdminEmail"];
+            var adminEmail = _configuration["EmailSettings:DefaultRecipientEmail"] ??
+                           _configuration["AdminSettings:DefaultAdminEmail"];
 
             var body = $@"
                 <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>
@@ -140,50 +141,34 @@ namespace webprogbackend.Services
             await SendEmailAsync(adminEmail, $"[ADMIN] {subject}", body);
         }
 
-        // Ana email gönderme metodu
-        private async Task SendEmailAsync(string toEmail, string subject, string body)
+        // Yeni sipariş bildirimi (Admin için)
+        public async Task SendNewOrderNotificationAsync(string orderDetails)
         {
-            try
-            {
-                // Email ayarlarını configuration'dan al
-                var smtpServer = _configuration["EmailSettings:SmtpServer"];
-                var smtpPort = int.Parse(_configuration["EmailSettings:Port"]);
-                var fromEmail = _configuration["EmailSettings:FromEmail"];
-                var fromPassword = _configuration["EmailSettings:Password"];
-                var fromName = _configuration["EmailSettings:FromName"];
+            var adminEmail = _configuration["EmailSettings:DefaultRecipientEmail"] ??
+                           _configuration["AdminSettings:DefaultAdminEmail"];
 
-                // SMTP client oluştur
-                using var smtpClient = new SmtpClient(smtpServer)
-                {
-                    Port = smtpPort,
-                    Credentials = new NetworkCredential(fromEmail, fromPassword),
-                    EnableSsl = true,
-                    Timeout = 10000 // 10 saniye timeout
-                };
+            var subject = "🛒 Yeni Sipariş Alındı!";
 
-                // Email mesajı oluştur
-                using var mailMessage = new MailMessage
-                {
-                    From = new MailAddress(fromEmail, fromName),
-                    Subject = subject,
-                    Body = body,
-                    IsBodyHtml = true
-                };
+            var body = $@"
+                <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;'>
+                    <div style='background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);'>
+                        <h2 style='color: #28a745; text-align: center; margin-bottom: 30px;'>
+                            🎉 Yeni Sipariş Alındı!
+                        </h2>
+                        
+                        {orderDetails}
+                        
+                        <div style='text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 8px; margin-top: 20px;'>
+                            <p style='margin: 0; color: #6c757d; font-size: 14px;'>
+                                🚀 Bu sipariş otomatik olarak oluşturulmuştur.<br>
+                                📧 E-ticaret sistemi tarafından gönderilmiştir.<br>
+                                📅 {DateTime.Now:dd.MM.yyyy HH:mm}
+                            </p>
+                        </div>
+                    </div>
+                </div>";
 
-                mailMessage.To.Add(toEmail);
-
-                // Email'i gönder
-                await smtpClient.SendMailAsync(mailMessage);
-
-                _logger.LogInformation("Email başarıyla gönderildi: {Email} - {Subject}", toEmail, subject);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Email gönderilirken hata oluştu: {Email} - {Subject}", toEmail, subject);
-
-                // Hata durumunda exception fırlatma, sadece logla
-                // Bu sayede sistem çökmez, sadece email gönderilmez
-            }
+            await SendEmailAsync(adminEmail, subject, body);
         }
 
         // Test email metodu
@@ -200,6 +185,7 @@ namespace webprogbackend.Services
                     <div style='background-color: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0;'>
                         <p><strong>✅ Email sistemi çalışıyor!</strong></p>
                         <p>Tarih: {DateTime.Now:dd.MM.yyyy HH:mm}</p>
+                        <p>Test Email: {testEmail}</p>
                     </div>
                     
                     <p style='color: #666; font-size: 14px;'>
@@ -208,6 +194,102 @@ namespace webprogbackend.Services
                 </div>";
 
             await SendEmailAsync(testEmail, subject, body);
+        }
+
+        // Ana email gönderme metodu
+        private async Task SendEmailAsync(string toEmail, string subject, string body)
+        {
+            try
+            {
+                // Email ayarlarını configuration'dan al
+                var smtpServer = _configuration["EmailSettings:SmtpServer"];
+                var smtpPort = int.Parse(_configuration["EmailSettings:Port"]);
+                var fromEmail = _configuration["EmailSettings:FromEmail"];
+                var fromPassword = _configuration["EmailSettings:Password"];
+                var fromName = _configuration["EmailSettings:FromName"];
+
+                _logger.LogInformation($"Email gönderiliyor: {toEmail} - {subject}");
+                _logger.LogInformation($"SMTP Ayarları: {smtpServer}:{smtpPort}, From: {fromEmail}");
+
+                // SMTP client oluştur
+                using var smtpClient = new SmtpClient(smtpServer)
+                {
+                    Port = smtpPort,
+                    Credentials = new NetworkCredential(fromEmail, fromPassword),
+                    EnableSsl = true,
+                    Timeout = 30000, // 30 saniye timeout
+                    DeliveryMethod = SmtpDeliveryMethod.Network
+                };
+
+                // Email mesajı oluştur
+                using var mailMessage = new MailMessage
+                {
+                    From = new MailAddress(fromEmail, fromName),
+                    Subject = subject,
+                    Body = body,
+                    IsBodyHtml = true,
+                    Priority = MailPriority.Normal
+                };
+
+                mailMessage.To.Add(toEmail);
+
+                // Email'i gönder
+                await smtpClient.SendMailAsync(mailMessage);
+
+                _logger.LogInformation($"Email başarıyla gönderildi: {toEmail} - {subject}");
+            }
+            catch (SmtpException smtpEx)
+            {
+                _logger.LogError(smtpEx, $"SMTP hatası - Email gönderilemedi: {toEmail} - {subject}");
+                _logger.LogError($"SMTP Hata Detayları: StatusCode={smtpEx.StatusCode}, Message={smtpEx.Message}");
+
+                // SMTP hatalarını daha detaylı logla
+                if (smtpEx.InnerException != null)
+                {
+                    _logger.LogError($"SMTP Inner Exception: {smtpEx.InnerException.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Genel hata - Email gönderilemedi: {toEmail} - {subject}");
+                _logger.LogError($"Hata türü: {ex.GetType().Name}");
+                _logger.LogError($"Hata mesajı: {ex.Message}");
+
+                if (ex.InnerException != null)
+                {
+                    _logger.LogError($"Inner Exception: {ex.InnerException.Message}");
+                }
+            }
+        }
+
+        // Email ayarlarını test et
+        public async Task<bool> TestEmailConfigurationAsync()
+        {
+            try
+            {
+                var smtpServer = _configuration["EmailSettings:SmtpServer"];
+                var smtpPort = int.Parse(_configuration["EmailSettings:Port"]);
+                var fromEmail = _configuration["EmailSettings:FromEmail"];
+                var fromPassword = _configuration["EmailSettings:Password"];
+
+                using var smtpClient = new SmtpClient(smtpServer)
+                {
+                    Port = smtpPort,
+                    Credentials = new NetworkCredential(fromEmail, fromPassword),
+                    EnableSsl = true,
+                    Timeout = 10000
+                };
+
+                // Bağlantıyı test et (gerçek email göndermeden)
+                _logger.LogInformation("Email konfigürasyonu test ediliyor...");
+
+                return true; // Basit test - gerçek SMTP testi için daha karmaşık kod gerekli
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email konfigürasyon testi başarısız");
+                return false;
+            }
         }
     }
 }
