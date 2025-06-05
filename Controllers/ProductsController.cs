@@ -22,8 +22,112 @@ namespace webprogbackend.Controllers
             _logger = logger;
         }
 
-        // GET: api/Products/All
+
+        // GET: api/Products/TopStock - En çok stoðu olan 3 ürün (TopSellingCarousel için)
+        [HttpGet("TopStock")]
+        public async Task<ActionResult<IEnumerable<object>>> GetTopStockProducts([FromQuery] int count = 3)
+        {
+            try
+            {
+                var topStockProducts = await _context.Products
+                    .Where(p => p.StockQuantity > 0) // Sadece stokta olan ürünler
+                    .OrderByDescending(p => p.StockQuantity) // En çok stoðu olana göre sýrala
+                    .Take(count)
+                    .Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        p.Description,
+                        p.Price,
+                        p.StockQuantity,
+                        p.Category,
+                        p.ImageUrl,
+                        p.CreatedAt
+                    })
+                    .ToListAsync();
+
+                return Ok(topStockProducts);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "En çok stoðu olan ürünler getirilirken hata oluþtu");
+                return StatusCode(500, new { message = "Sunucu hatasý oluþtu" });
+            }
+        }
+
+        // GET: api/Products/All - Tüm ürünler (Home sayfasý için)
         [HttpGet("All")]
+        public async Task<ActionResult<IEnumerable<object>>> GetAllProducts(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50,
+            [FromQuery] string category = "",
+            [FromQuery] string search = "",
+            [FromQuery] bool inStockOnly = false)
+        {
+            try
+            {
+                var query = _context.Products.AsQueryable();
+
+                // Kategoriye göre filtreleme
+                if (!string.IsNullOrEmpty(category))
+                {
+                    query = query.Where(p => p.Category.ToLower() == category.ToLower());
+                }
+
+                // Arama filtresi
+                if (!string.IsNullOrEmpty(search))
+                {
+                    query = query.Where(p => p.Name.Contains(search) || p.Description.Contains(search));
+                }
+
+                // Sadece stokta olanlar
+                if (inStockOnly)
+                {
+                    query = query.Where(p => p.StockQuantity > 0);
+                }
+
+                // Toplam sayý
+                var totalCount = await query.CountAsync();
+
+                // Sayfalama ve sýralama
+                var products = await query
+                    .OrderByDescending(p => p.CreatedAt) // En yeni ürünler önce
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        p.Description,
+                        p.Price,
+                        p.StockQuantity,
+                        p.Category,
+                        p.ImageUrl,
+                        p.CreatedAt,
+                        IsInStock = p.StockQuantity > 0,
+                        StockStatus = p.StockQuantity == 0 ? "Tükendi" :
+                                     p.StockQuantity <= 10 ? "Az Kaldý" : "Stokta"
+                    })
+                    .ToListAsync();
+
+                // Response headers
+                Response.Headers.Add("X-Total-Count", totalCount.ToString());
+                Response.Headers.Add("X-Page", page.ToString());
+                Response.Headers.Add("X-Page-Size", pageSize.ToString());
+                Response.Headers.Add("X-Total-Pages", ((int)Math.Ceiling(totalCount / (double)pageSize)).ToString());
+
+                return Ok(products);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Tüm ürünler getirilirken hata oluþtu");
+                return StatusCode(500, new { message = "Sunucu hatasý oluþtu" });
+            }
+        }
+
+
+        // GET: api/Products/All
+        [HttpGet("All2")]
         public async Task<ActionResult<IEnumerable<Product>>> GetAllProducts()
         {
             try
@@ -161,40 +265,40 @@ namespace webprogbackend.Controllers
             }
         }
 
-        // GET: api/Products/TopStock/3
-        [HttpGet("TopStock/{count:int?}")]
-        public async Task<ActionResult<IEnumerable<object>>> GetTopStockProducts(int count = 3)
-        {
-            try
-            {
-                var topStockProducts = await _context.Products
-                    .OrderByDescending(p => p.StockQuantity)
-                    .Take(count)
-                    .Select(p => new
-                    {
-                        p.Id,
-                        p.Name,
-                        p.Category,
-                        p.Price,
-                        p.StockQuantity,
-                        p.ImageUrl,
-                        p.Description
-                    })
-                    .ToListAsync();
+        //// GET: api/Products/TopStock/3
+        //[HttpGet("TopStock/{count:int?}")]
+        //public async Task<ActionResult<IEnumerable<object>>> GetTopStockProducts2(int count = 3)
+        //{
+        //    try
+        //    {
+        //        var topStockProducts = await _context.Products
+        //            .OrderByDescending(p => p.StockQuantity)
+        //            .Take(count)
+        //            .Select(p => new
+        //            {
+        //                p.Id,
+        //                p.Name,
+        //                p.Category,
+        //                p.Price,
+        //                p.StockQuantity,
+        //                p.ImageUrl,
+        //                p.Description
+        //            })
+        //            .ToListAsync();
 
-                return Ok(new
-                {
-                    message = $"En fazla stoða sahip {count} ürün",
-                    count = topStockProducts.Count,
-                    products = topStockProducts
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting top stock products");
-                return StatusCode(500, new { message = "En yüksek stoklu ürünler yüklenirken hata oluþtu" });
-            }
-        }
+        //        return Ok(new
+        //        {
+        //            message = $"En fazla stoða sahip {count} ürün",
+        //            count = topStockProducts.Count,
+        //            products = topStockProducts
+        //        });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError(ex, "Error getting top stock products");
+        //        return StatusCode(500, new { message = "En yüksek stoklu ürünler yüklenirken hata oluþtu" });
+        //    }
+        //}
 
         // GET: api/Products/LowStock/10
         [HttpGet("LowStock/{threshold:int?}")]
