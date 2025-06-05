@@ -147,6 +147,121 @@ namespace webprogbackend.Controllers
             }
         }
 
+        [HttpPost("Register-Admin")]
+        public async Task<ActionResult<AuthResponse>> RegisterAdmin([FromBody] RegisterRequest request)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new AuthResponse
+                    {
+                        Success = false,
+                        Message = "Geçersiz veri giriþi",
+                        Errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)).ToList()
+                    });
+                }
+
+                // Email kontrolü
+                var existingUserByEmail = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Email.ToLower() == request.Email.ToLower());
+
+                if (existingUserByEmail != null)
+                {
+                    return BadRequest(new AuthResponse
+                    {
+                        Success = false,
+                        Message = "Bu email adresi zaten kullanýlýyor"
+                    });
+                }
+
+                // Username kontrolü
+                var existingUserByUsername = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Username.ToLower() == request.Username.ToLower());
+
+                if (existingUserByUsername != null)
+                {
+                    return BadRequest(new AuthResponse
+                    {
+                        Success = false,
+                        Message = "Bu kullanýcý adý zaten kullanýlýyor"
+                    });
+                }
+
+                // Þifre kontrolü
+                if (request.Password != request.ConfirmPassword)
+                {
+                    return BadRequest(new AuthResponse
+                    {
+                        Success = false,
+                        Message = "Þifreler eþleþmiyor"
+                    });
+                }
+
+                // Yeni kullanýcý oluþtur
+                var user = new User
+                {
+                    Username = request.Username,
+                    Email = request.Email,
+                    Password = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                    Role = UserRole.Admin,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+
+                // Kullanýcý için sepet oluþtur
+                var cart = new Cart
+                {
+                    UserId = user.Id,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Carts.Add(cart);
+                await _context.SaveChangesAsync();
+
+                // JWT token oluþtur
+                var token = _jwtService.GenerateToken(user);
+
+                // Hoþ geldin emaili gönder (arka planda)
+                try
+                {
+                    await _emailService.SendWelcomeEmailAsync(user.Email, user.Username);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Welcome email could not be sent to {Email}", user.Email);
+                }
+
+                _logger.LogInformation("New user registered: {Email}", user.Email);
+
+                return Ok(new AuthResponse
+                {
+                    Success = true,
+                    Message = "Kayýt baþarýyla tamamlandý",
+                    Token = token,
+                    User = new UserInfo
+                    {
+                        Id = user.Id,
+                        Username = user.Username,
+                        Email = user.Email,
+                        Role = user.Role.ToString()
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during user registration");
+                return StatusCode(500, new AuthResponse
+                {
+                    Success = false,
+                    Message = "Kayýt sýrasýnda bir hata oluþtu. Lütfen tekrar deneyin."
+                });
+            }
+        }
+
+
+
         /// <summary>
         /// Kullanýcý giriþ iþlemi
         /// </summary>
